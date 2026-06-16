@@ -54,7 +54,9 @@ export function Dashboard() {
       value: live.ram.total > 0
         ? `${live.ram.usagePercent}% (${formatBytes(live.ram.used)} / ${formatBytes(live.ram.total)})`
         : (mRam ? formatBytes(mRam.total) : '—'),
-      subvalue: mRam ? `${mRam.type || ''} ${mRam.speed ? `@ ${mRam.speed} MHz` : ''}`.trim() || null : null,
+      subvalue: mRam && mRam.slots?.[0]?.size > 0
+        ? `${mRam.slots[0].type || ''} ${mRam.slots[0].speed ? `@ ${mRam.slots[0].speed} MHz` : ''}`.trim() || null
+        : null,
       status: live.ram.usagePercent >= 85 ? 'warning' as const : 'success' as const,
     },
     {
@@ -63,8 +65,8 @@ export function Dashboard() {
       value: live.storage.totalGB > 0
         ? `${live.storage.usagePercent}% (${live.storage.freeGB} GB libres)`
         : '—',
-      subvalue: mDisk && !Number.isNaN(mDisk.speed)
-        ? `${mDisk.type || '?'} — ${mDisk.speed ? `${mDisk.speed} MB/s` : ''}`
+      subvalue: mDisk
+        ? `${mDisk.type || '?'} — ${mDisk.interfaceType || ''} ${mDisk.isBootDrive ? '(Sistema)' : ''}`
         : null,
       status: live.storage.usagePercent >= 90 ? 'danger' as const
         : live.storage.usagePercent >= 75 ? 'warning' as const
@@ -86,6 +88,21 @@ export function Dashboard() {
         : 'success' as const,
     },
   ]
+
+  const container = {
+    hidden: { opacity: 0 },
+    show: {
+      opacity: 1,
+      transition: { staggerChildren: 0.08 },
+    },
+  }
+
+  const item = {
+    hidden: { opacity: 0, y: 20 },
+    show: { opacity: 1, y: 0 },
+  }
+
+  const lastDiagStatus = currentDiagnostic?.status === 'APROBADO'
     ? 'success'
     : currentDiagnostic?.status === 'APROBADO_CON_OBSERVACIONES'
     ? 'warning'
