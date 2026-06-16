@@ -49,7 +49,8 @@ async function runSystemPhase(): Promise<AutoDiagnosticPhase> {
       if (ext.edition) results.push(result('sys-edition', 'OS', 'Edición de Windows', 'PASS', ext.edition))
       if (ext.uptime) results.push(result('sys-uptime', 'OS', 'Tiempo encendido', 'PASS', `${ext.uptime.days}d ${ext.uptime.hours}h ${ext.uptime.minutes}m`))
       if (ext.powerPlan) results.push(result('sys-powerplan', 'OS', 'Plan de energía', 'PASS', ext.powerPlan))
-      if (ext.secureBoot !== null) results.push(result('sys-secureboot', 'OS', 'Secure Boot', ext.secureBoot ? 'PASS' : 'WARN', ext.secureBoot ? 'Activado' : 'Desactivado', ext.secureBoot ? undefined : 'Secure Boot está desactivado. El sistema es más vulnerable a ataques de bootkit.'))
+      if (ext.secureBoot === true) results.push(result('sys-secureboot', 'OS', 'Secure Boot', 'PASS', 'Activado'))
+      else if (ext.secureBoot === false) results.push(result('sys-secureboot', 'OS', 'Secure Boot', 'WARN', 'Desactivado', 'Secure Boot está desactivado. El sistema es más vulnerable a ataques de bootkit.'))
       if (ext.tpm) results.push(result('sys-tpm', 'OS', 'TPM', ext.tpm.present ? 'PASS' : 'WARN', ext.tpm.present ? `Presente (${ext.tpm.version || 'vN/A'})${ext.tpm.enabled ? ' • Activado' : ' • Desactivado'}` : 'No presente', ext.tpm.present ? (ext.tpm.enabled ? undefined : 'TPM está desactivado en BIOS/UEFI. BitLocker y Windows Hello requieren TPM activado.') : 'TPM no detectado. El equipo no cumple requisitos de seguridad modernos.'))
       if (ext.virtualization) {
         const virtStatus: TestStatus = ext.virtualization.enabled ? 'PASS' : 'WARN'
@@ -275,7 +276,7 @@ async function runStoragePhase(): Promise<AutoDiagnosticPhase> {
 
     for (let i = 0; i < disks.length; i++) {
       const disk = disks[i]
-      const fs = fsSize.find(f => f.fs.includes(disk.device) || disk.device.includes(f.fs.substring(0, 3)))
+      const fs = fsSize.find(f => (f.fs ?? '').includes(disk.device) || disk.device.includes((f.fs ?? '').substring(0, 3)))
       const deviceId = disk.name || `PhysicalDrive${i}`
       const isBoot = i === 0 || (disk.device || '').toLowerCase().includes('c:')
 
@@ -323,7 +324,7 @@ async function runStoragePhase(): Promise<AutoDiagnosticPhase> {
               wearStatus === 'FAIL' ? 'SSD al final de su vida útil. Reemplácelo lo antes posible para evitar pérdida de datos.' : wearStatus === 'WARN' ? 'Desgaste de SSD significativo. Considere reemplazarlo en los próximos meses.' : undefined))
           }
           if (smart.PowerOnHours !== null && smart.PowerOnHours !== undefined) {
-            const poh = parseInt(smart.PowerOnHours)
+            const poh = parseInt(String(smart.PowerOnHours).replace(/,/g, ''))
             if (poh > 0) {
               let pohStatus: TestStatus = 'PASS'
               if (poh > 50000) pohStatus = 'FAIL'
@@ -570,7 +571,7 @@ async function runNetworkPhase(): Promise<AutoDiagnosticPhase> {
           (r) => r, 1, 10000
         )
         if (pingLatency) {
-          const latency = Math.round(parseFloat(pingLatency))
+          const latency = Math.round(parseFloat(String(pingLatency).replace(',', '.')))
           let latencyStatus: TestStatus = 'PASS'
           if (latency >= 200) latencyStatus = 'FAIL'
           else if (latency >= 100) latencyStatus = 'WARN'

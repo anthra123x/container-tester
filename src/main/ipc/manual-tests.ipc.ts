@@ -69,53 +69,63 @@ export function registerManualTestsIpcHandlers(): void {
   })
 
   ipcMain.handle(IPC_CHANNELS.MANUAL_MIC_RECORD, async (): Promise<string> => {
-    const outputFile = join(__dirname, '../../temp/mic-recording.wav')
-    const escapedPath = outputFile.replace(/\\/g, '\\\\')
-    const script = [
-      'Add-Type -AssemblyName System.Windows.Forms',
-      '$capture = New-Object System.Media.SoundPlayer',
-      '$tempFile = "' + escapedPath + '"',
-      '',
-      '$mci = @\"',
-      '  using System.Runtime.InteropServices;',
-      '  public class MCI {',
-      '    [DllImport("winmm.dll")]',
-      '    public static extern int mciSendString(string lpstrCommand, string lpstrReturnString, int uReturnLength, int hwndCallback);',
-      '  }',
-      '@\"',
-      'Add-Type -TypeDefinition $mci',
-      '',
-      '[MCI]::mciSendString("open new type waveaudio alias capture", "", 0, 0)',
-      '[MCI]::mciSendString("record capture", "", 0, 0)',
-      'Start-Sleep -Seconds 5',
-      '[MCI]::mciSendString("save capture " + [char]34 + $tempFile + [char]34, "", 0, 0)',
-      '[MCI]::mciSendString("close capture", "", 0, 0)',
-      '',
-      'if (Test-Path $tempFile) { Write-Output "OK" } else { Write-Output "FAIL" }'
-    ].join('\n')
-    return runPowerShell(script)
+    try {
+      const outputFile = join(__dirname, '../../temp/mic-recording.wav')
+      const escapedPath = outputFile.replace(/\\/g, '\\\\')
+      const script = [
+        'Add-Type -AssemblyName System.Windows.Forms',
+        '$capture = New-Object System.Media.SoundPlayer',
+        '$tempFile = "' + escapedPath + '"',
+        '',
+        '$mci = @\"',
+        '  using System.Runtime.InteropServices;',
+        '  public class MCI {',
+        '    [DllImport("winmm.dll")]',
+        '    public static extern int mciSendString(string lpstrCommand, string lpstrReturnString, int uReturnLength, int hwndCallback);',
+        '  }',
+        '@\"',
+        'Add-Type -TypeDefinition $mci',
+        '',
+        '[MCI]::mciSendString("open new type waveaudio alias capture", "", 0, 0)',
+        '[MCI]::mciSendString("record capture", "", 0, 0)',
+        'Start-Sleep -Seconds 5',
+        '[MCI]::mciSendString("save capture " + [char]34 + $tempFile + [char]34, "", 0, 0)',
+        '[MCI]::mciSendString("close capture", "", 0, 0)',
+        '',
+        'if (Test-Path $tempFile) { Write-Output "OK" } else { Write-Output "FAIL" }'
+      ].join('\n')
+      return runPowerShell(script)
+    } catch {
+      return 'FAIL'
+    }
   })
 
   ipcMain.handle(IPC_CHANNELS.MANUAL_AUDIO_PLAY, async (_event, frequency?: number, duration?: number): Promise<void> => {
-    const freq = frequency ?? 440
-    const dur = duration ?? 2000
-    const script = `
-      [System.Console]::Beep(${freq}, ${dur})
-      Write-Output "OK"
-    `
-    await runPowerShell(script)
+    try {
+      const freq = frequency ?? 440
+      const dur = duration ?? 2000
+      const script = `
+        [System.Console]::Beep(${freq}, ${dur})
+        Write-Output "OK"
+      `
+      await runPowerShell(script)
+    } catch { }
   })
 
   ipcMain.handle(IPC_CHANNELS.MANUAL_USB_MONITOR_START, async (): Promise<void> => {
     if (usbMonitorInterval) return
 
-    const getUsbDevices = async (): Promise<string[]> => {
-      const script = `
-        Get-PnpDevice -Class USB | Where-Object { $_.Status -eq 'OK' } | ForEach-Object { $_.FriendlyName }
-      `
-      const result = await runPowerShell(script)
-      return result.split('\n').filter(Boolean).map(s => s.trim())
-    }
+      const getUsbDevices = async (): Promise<string[]> => {
+        try {
+          const script = `
+            Get-PnpDevice -Class USB | Where-Object { $_.Status -eq 'OK' } | ForEach-Object { $_.FriendlyName }
+          `
+          const result = await runPowerShell(script)
+          return (result ?? '').split('\n').filter(Boolean).map(s => s.trim())
+        } catch {
+          return []
+        }
+      }
 
     lastUsbDevices = await getUsbDevices()
 

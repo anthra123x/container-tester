@@ -186,7 +186,7 @@ export async function getCPUInfo(): Promise<CPUInfo> {
     speedMin: cpu.speedMin,
     usage: Math.round(currentLoad.currentLoad * 100) / 100,
     temperature: temp,
-    voltage: cpu.voltage ? parseFloat(cpu.voltage) : null,
+    voltage: cpu.voltage != null ? parseFloat(String(cpu.voltage)) : null,
     coreTemps,
     perCoreLoad,
     cacheL1d: cache?.l1d ?? null,
@@ -231,7 +231,7 @@ export async function getRAMInfo(): Promise<RAMInfo> {
 export async function getGPUInfo(): Promise<GPUInfo> {
   const graphics = await withTimeout(si.graphics(), SI_TIMEOUT, 'graphics')
 
-  if (graphics.controllers.length === 0) {
+  if (!graphics.controllers?.length) {
     return { model: 'No detectada', vendor: 'N/A', vram: 0, driverVersion: 'N/A', temperature: null, usage: 0 }
   }
 

@@ -102,7 +102,8 @@ async function getMotherboardSensors(): Promise<{
   let voltageRails: VoltageRail[] = []
   if (vrResult) {
     try {
-      voltageRails = JSON.parse(vrResult)
+      const parsed = JSON.parse(vrResult)
+      voltageRails = Array.isArray(parsed) ? parsed : []
     } catch { }
   }
 
@@ -141,7 +142,7 @@ async function getFanSpeeds(): Promise<FanInfo[]> {
 }
 
 export async function getSensorInfo(): Promise<SensorInfo> {
-  const [cpuTemp, graphics, diskLayout, mbSensors, fanSpeeds] = await Promise.all([
+  const [cpuTemp, graphics, diskLayout, mbSensors, fanSpeeds] = await Promise.allSettled([
     si.cpuTemperature(),
     si.graphics(),
     si.diskLayout(),
@@ -149,12 +150,18 @@ export async function getSensorInfo(): Promise<SensorInfo> {
     getFanSpeeds()
   ])
 
-  const gpuController = graphics.controllers && graphics.controllers.length > 0
-    ? graphics.controllers[0]
+  const cpuTempVal = cpuTemp.status === 'fulfilled' ? cpuTemp.value : { main: null, cores: [], max: null, package: null }
+  const graphicsVal = graphics.status === 'fulfilled' ? graphics.value : { controllers: [] }
+  const diskLayoutVal = diskLayout.status === 'fulfilled' ? diskLayout.value : []
+  const mbSensorsVal = mbSensors.status === 'fulfilled' ? mbSensors.value : { motherboardTemp: null, chipsetTemp: null, voltageRails: [] }
+  const fanSpeedsVal = fanSpeeds.status === 'fulfilled' ? fanSpeeds.value : []
+
+  const gpuController = graphicsVal.controllers?.length > 0
+    ? graphicsVal.controllers[0]
     : null
 
   const storageTemps: { device: string; temperature: number | null }[] = []
-  for (const disk of diskLayout) {
+  for (const disk of diskLayoutVal) {
     storageTemps.push({
       device: disk.name || 'Unknown',
       temperature: disk.temperature ?? null
@@ -163,10 +170,10 @@ export async function getSensorInfo(): Promise<SensorInfo> {
 
   return {
     cpu: {
-      main: cpuTemp.main ?? null,
-      cores: cpuTemp.cores ?? [],
-      max: cpuTemp.max ?? null,
-      packageTemp: cpuTemp.package ?? null
+      main: cpuTempVal.main ?? null,
+      cores: cpuTempVal.cores ?? [],
+      max: cpuTempVal.max ?? null,
+      packageTemp: cpuTempVal.package ?? null
     },
     gpu: {
       temperature: gpuController?.temperatureGpu ?? null,
@@ -180,10 +187,10 @@ export async function getSensorInfo(): Promise<SensorInfo> {
     },
     storage: storageTemps,
     motherboard: {
-      temp: mbSensors.motherboardTemp,
-      chipsetTemp: mbSensors.chipsetTemp,
-      voltageRails: mbSensors.voltageRails
+      temp: mbSensorsVal.motherboardTemp,
+      chipsetTemp: mbSensorsVal.chipsetTemp,
+      voltageRails: mbSensorsVal.voltageRails
     },
-    fans: fanSpeeds
+    fans: fanSpeedsVal
   }
 }

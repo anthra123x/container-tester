@@ -72,7 +72,7 @@ export async function getWifiInfo(): Promise<WifiInfo> {
       mode: n.mode || '',
       channel: n.channel || 0,
       frequency: n.frequency || 0,
-      signalLevel: n.signalLevel ?? null,
+      signalLevel: (n as any).signal_level ?? n.signalLevel ?? null,
       quality: n.quality ?? null,
       security: (n.security || []).join(', '),
       wpaFlags: (n.wpaFlags || []).join(', '),

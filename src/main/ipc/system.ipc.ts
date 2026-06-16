@@ -9,8 +9,12 @@ import { getSensorInfo } from '../services/sensor.service'
 import type { CPUInfo, RAMInfo, GPUInfo, OSInfo, MotherboardInfo, SystemInfo, StorageInfo, BatteryInfo, SensorInfo, WifiInfo } from '../../shared/types/hardware.types'
 
 export function registerSystemIpcHandlers(): void {
-  ipcMain.handle(IPC_CHANNELS.GET_SYSTEM_INFO, async (): Promise<SystemInfo> => {
-    return getSystemInfo()
+  ipcMain.handle(IPC_CHANNELS.GET_SYSTEM_INFO, async (): Promise<SystemInfo | null> => {
+    try {
+      return await getSystemInfo()
+    } catch {
+      return null
+    }
   })
 
   ipcMain.handle(IPC_CHANNELS.GET_SYSTEM_SPECS, async (): Promise<{
@@ -43,41 +47,61 @@ export function registerSystemIpcHandlers(): void {
     }
   })
 
-  ipcMain.handle(IPC_CHANNELS.GET_CPU_INFO, async (): Promise<CPUInfo> => {
-    return getCPUInfo()
-  })
-
-  ipcMain.handle(IPC_CHANNELS.GET_RAM_INFO, async (): Promise<RAMInfo> => {
-    return getRAMInfo()
-  })
-
-  ipcMain.handle(IPC_CHANNELS.GET_GPU_INFO, async (): Promise<GPUInfo> => {
-    return getGPUInfo()
-  })
-
-  ipcMain.handle(IPC_CHANNELS.GET_OS_INFO, async (): Promise<OSInfo> => {
-    const osInfo = await si.osInfo()
-    return {
-      platform: osInfo.platform,
-      distro: osInfo.distro,
-      release: osInfo.release,
-      kernel: osInfo.kernel,
-      arch: osInfo.arch,
-      hostname: osInfo.hostname,
-      activated: true
+  ipcMain.handle(IPC_CHANNELS.GET_CPU_INFO, async (): Promise<CPUInfo | null> => {
+    try {
+      return await getCPUInfo()
+    } catch {
+      return null
     }
   })
 
-  ipcMain.handle(IPC_CHANNELS.GET_MOTHERBOARD_INFO, async (): Promise<MotherboardInfo> => {
-    const system = await si.system()
-    const bios = await si.bios()
-    return {
-      manufacturer: system.manufacturer,
-      model: system.model,
-      version: system.version,
-      serial: system.serial,
-      biosVersion: bios.version,
-      biosDate: bios.releaseDate
+  ipcMain.handle(IPC_CHANNELS.GET_RAM_INFO, async (): Promise<RAMInfo | null> => {
+    try {
+      return await getRAMInfo()
+    } catch {
+      return null
+    }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.GET_GPU_INFO, async (): Promise<GPUInfo | null> => {
+    try {
+      return await getGPUInfo()
+    } catch {
+      return null
+    }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.GET_OS_INFO, async (): Promise<OSInfo | null> => {
+    try {
+      const osInfo = await si.osInfo()
+      return {
+        platform: osInfo.platform,
+        distro: osInfo.distro,
+        release: osInfo.release,
+        kernel: osInfo.kernel,
+        arch: osInfo.arch,
+        hostname: osInfo.hostname,
+        activated: true
+      }
+    } catch {
+      return null
+    }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.GET_MOTHERBOARD_INFO, async (): Promise<MotherboardInfo | null> => {
+    try {
+      const system = await si.system()
+      const bios = await si.bios()
+      return {
+        manufacturer: system.manufacturer,
+        model: system.model,
+        version: system.version,
+        serial: system.serial,
+        biosVersion: bios.version,
+        biosDate: bios.releaseDate
+      }
+    } catch {
+      return null
     }
   })
 }

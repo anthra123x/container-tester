@@ -142,23 +142,25 @@ async function getDiskSMARTFallback(deviceIndex: number): Promise<{
 }
 
 export async function getStorageInfo(): Promise<StorageInfo[]> {
-  const [diskLayout, fsSize, disksIO] = await Promise.all([
+  const [diskLayout, fsSize] = await Promise.allSettled([
     si.diskLayout(),
-    si.fsSize(),
-    si.disksIO().catch(() => null)
+    si.fsSize()
   ])
 
+  const diskLayoutVal = diskLayout.status === 'fulfilled' ? diskLayout.value : []
+  const fsSizeVal = fsSize.status === 'fulfilled' ? fsSize.value : []
+
   const filesystemMap = new Map<string, { used: number; available: number }>()
-  for (const fs of fsSize) {
-    const key = fs.fs.toLowerCase()
+  for (const fs of fsSizeVal) {
+    const key = (fs.fs ?? '').toLowerCase()
     if (!filesystemMap.has(key) || (filesystemMap.get(key)?.used ?? 0) < fs.used) {
       filesystemMap.set(key, { used: fs.used, available: fs.size - fs.used })
     }
   }
 
   const results: StorageInfo[] = []
-  for (let index = 0; index < diskLayout.length; index++) {
-    const disk = diskLayout[index]
+  for (let index = 0; index < diskLayoutVal.length; index++) {
+    const disk = diskLayoutVal[index]
     const smartDetail = await getDiskSMARTDetailed(index)
     const ioStats = await getDiskIOStats(index)
     const fallback = await getDiskSMARTFallback(index)
@@ -196,7 +198,7 @@ export async function getStorageInfo(): Promise<StorageInfo[]> {
         )
         if (nvme) {
           const parsed = JSON.parse(nvme)
-          if (parsed.NVMeMaxLanes || parsed.NVMeMaxSpeed) {
+          if (parsed && (parsed.NVMeMaxLanes || parsed.NVMeMaxSpeed)) {
             nvmePcieLanes = `${parsed.NVMeMaxSpeed || '?'} GT/s x${parsed.NVMeMaxLanes || '?'}`
           }
         }
