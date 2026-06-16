@@ -1,5 +1,6 @@
 import { app, BrowserWindow, shell } from 'electron'
 import { join } from 'path'
+import { mkdir } from 'fs/promises'
 import { registerAllIpcHandlers } from './ipc'
 
 let mainWindow: BrowserWindow | null = null
@@ -52,8 +53,9 @@ function createWindow(): void {
   }
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   try {
+    await mkdir(join(app.getPath('temp'), 'cds-audio'), { recursive: true })
     registerAllIpcHandlers()
     createWindow()
   } catch (err) {

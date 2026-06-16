@@ -16,7 +16,7 @@ export function useSystemInfo() {
     setLoading(true)
     setError(null)
     try {
-      const info: SystemInfo = await invoke(IPC_CHANNELS.GET_SYSTEM_INFO)
+      const info: SystemInfo | null = await invoke(IPC_CHANNELS.GET_SYSTEM_INFO)
       setSystemInfo(info)
     } catch (err: any) {
       setError(err?.message || 'Error obteniendo información del sistema')

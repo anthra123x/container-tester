@@ -1,4 +1,4 @@
-import { ipcMain, BrowserWindow } from 'electron'
+import { ipcMain, BrowserWindow, app } from 'electron'
 import { join } from 'path'
 import { IPC_CHANNELS } from '../../shared/constants/ipc-channels'
 import { runPowerShell } from '../services/powershell'
@@ -70,7 +70,7 @@ export function registerManualTestsIpcHandlers(): void {
 
   ipcMain.handle(IPC_CHANNELS.MANUAL_MIC_RECORD, async (): Promise<string> => {
     try {
-      const outputFile = join(__dirname, '../../temp/mic-recording.wav')
+      const outputFile = join(app.getPath('temp'), 'cds-audio', 'mic-recording.wav')
       const escapedPath = outputFile.replace(/\\/g, '\\\\')
       const script = [
         'Add-Type -AssemblyName System.Windows.Forms',
