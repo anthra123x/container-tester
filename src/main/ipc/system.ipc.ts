@@ -1,7 +1,11 @@
 import { ipcMain } from 'electron'
 import si from 'systeminformation'
 import { IPC_CHANNELS } from '../../shared/constants/ipc-channels'
-import { getCPUInfo, getRAMInfo, getGPUInfo, getSystemInfo, getStorageInfo, getBatteryInfo, getSensorInfo, getWifiInfo } from '../services/system-info.service'
+import { getCPUInfo, getRAMInfo, getGPUInfo, getSystemInfo } from '../services/system-info.service'
+import { getWifiInfo } from '../services/network.service'
+import { getStorageInfo } from '../services/storage.service'
+import { getBatteryInfo } from '../services/battery.service'
+import { getSensorInfo } from '../services/sensor.service'
 import type { CPUInfo, RAMInfo, GPUInfo, OSInfo, MotherboardInfo, SystemInfo, StorageInfo, BatteryInfo, SensorInfo, WifiInfo } from '../../shared/types/hardware.types'
 
 export function registerSystemIpcHandlers(): void {

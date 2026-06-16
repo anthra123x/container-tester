@@ -1,6 +1,6 @@
 import si from 'systeminformation'
-import { runPowerShell } from './powershell'
-import type { SystemInfo, CPUInfo, RAMInfo, GPUInfo, OSInfo, MotherboardInfo, RAMSlot } from '../../shared/types/hardware.types'
+import { runPowerShellWithRetry } from './powershell'
+import type { SystemInfo, CPUInfo, RAMInfo, GPUInfo, MotherboardInfo, RAMSlot } from '../../shared/types/hardware.types'
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return Promise.race([
@@ -14,23 +14,105 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
 const SI_TIMEOUT = 15000
 
 export async function getOSActivation(): Promise<boolean> {
+  const result = await runPowerShellWithRetry<string>(
+    '$status = Get-CimInstance -ClassName SoftwareLicensingProduct | Where-Object { $_.PartialProductKey -ne $null }; if ($status) { Write-Output "Activated" } else { Write-Output "NotActivated" }',
+    (r) => r
+  )
+  return result === 'Activated'
+}
+
+async function getOSWindowsEdition(): Promise<string | null> {
+  return runPowerShellWithRetry<string>(
+    '$os = Get-CimInstance Win32_OperatingSystem; Write-Output "$($os.Caption) $($os.BuildNumber)"',
+    (r) => r
+  )
+}
+
+async function isSecureBootEnabled(): Promise<boolean | null> {
   try {
-    const script = `
-      $status = Get-CimInstance -ClassName SoftwareLicensingProduct | Where-Object { $_.PartialProductKey -ne $null }
-      if ($status) { Write-Output "Activated" } else { Write-Output "NotActivated" }
-    `
-    const result = await runPowerShell(script)
-    return result === 'Activated'
+    const result = await runPowerShellWithRetry<string>(
+      'Confirm-SecureBootUEFI -ErrorAction SilentlyContinue; if ($?) { $r = $LASTEXITCODE; Write-Output $r } else { Write-Output "null" }',
+      (r) => r
+    )
+    if (result === '0') return false
+    if (result === '1') return true
+    return null
+  } catch { return null }
+}
+
+async function getTPMInfo(): Promise<{ present: boolean; version: string | null; enabled: boolean | null } | null> {
+  return runPowerShellWithRetry<{ present: boolean; version: string | null; enabled: boolean | null }>(
+    `$tpm = Get-CimInstance -Namespace root/cimv2/Security/MicrosoftTpm -ClassName Win32_Tpm -ErrorAction SilentlyContinue
+     if (-not $tpm) { return "{""present"": false}" }
+     $enabled = try { if ($tpm.IsEnabled_InitialValue -and $tpm.IsEnabled_InitialValue[0] -eq 1) { $true } else { $false } } catch { $null }
+     $ver = try { ($tpm.SpecVersion -split ',')[0] } catch { $null }
+     return "{""present"": true, ""version"": ""$ver"", ""enabled"": $enabled }"`,
+    JSON.parse
+  )
+}
+
+async function getVirtualizationInfo(): Promise<{ supported: boolean | null; enabled: boolean | null; hypervisorPresent: boolean | null }> {
+  try {
+    const cpu = await si.cpu()
+    const hasVirt = cpu.virtualization || (cpu.flags?.some(f => ['vmx', 'svm'].includes(f.toLowerCase())) ?? false)
+    const [hvResult, enabledResult] = await Promise.all([
+      runPowerShellWithRetry<string>(
+        'Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue | Select-Object -ExpandProperty HypervisorPresent',
+        (r) => r
+      ),
+      runPowerShellWithRetry<string>(
+        '(Get-CimInstance Win32_Processor -ErrorAction SilentlyContinue | Select-Object -First 1).VirtualizationFirmwareEnabled',
+        (r) => r
+      )
+    ])
+    return {
+      supported: hasVirt,
+      enabled: enabledResult === 'True' ? true : enabledResult === 'False' ? false : null,
+      hypervisorPresent: hvResult === 'True' ? true : hvResult === 'False' ? false : null
+    }
   } catch {
-    return false
+    return { supported: null, enabled: null, hypervisorPresent: null }
+  }
+}
+
+async function getPowerPlan(): Promise<string | null> {
+  return runPowerShellWithRetry<string>(
+    'powercfg /getactivescheme | Select-String -Pattern "\\{[a-f0-9-]+\\}" | ForEach-Object { $_.Matches[0].Value }',
+    (r) => {
+      const match = r.match(/\{([a-f0-9-]+)\}/i)
+      if (!match) return r
+      const planMap: Record<string, string> = {
+        '381b4222-f694-41f0-9685-ff5bb260df2f': 'Balanced (Recommended)',
+        '8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c': 'High Performance',
+        'a1841308-3541-4fab-bc81-f71556f20b4a': 'Power Saver',
+      }
+      return planMap[match[1].toLowerCase()] ?? r
+    }
+  )
+}
+
+async function getUptime(): Promise<{ seconds: number; days: number; hours: number; minutes: number }> {
+  const time = await withTimeout(si.time(), SI_TIMEOUT, 'time')
+  const uptimeSec = time.uptime ?? 0
+  return {
+    seconds: uptimeSec,
+    days: Math.floor(uptimeSec / 86400),
+    hours: Math.floor((uptimeSec % 86400) / 3600),
+    minutes: Math.floor((uptimeSec % 3600) / 60),
   }
 }
 
 export async function getSystemInfo(): Promise<SystemInfo> {
-  const [system, os, activated] = await Promise.all([
+  const [system, os, activated, edition, secureBoot, tpm, virt, powerPlan, uptime] = await Promise.all([
     withTimeout(si.system(), SI_TIMEOUT, 'system'),
     withTimeout(si.osInfo(), SI_TIMEOUT, 'osInfo'),
-    getOSActivation()
+    getOSActivation(),
+    getOSWindowsEdition(),
+    isSecureBootEnabled(),
+    getTPMInfo(),
+    getVirtualizationInfo(),
+    getPowerPlan(),
+    getUptime()
   ])
 
   const motherboard = await getMotherboardInfo()
@@ -49,7 +131,15 @@ export async function getSystemInfo(): Promise<SystemInfo> {
       hostname: os.hostname,
       activated
     },
-    motherboard
+    motherboard,
+    extraSystem: {
+      edition,
+      secureBoot,
+      tpm,
+      virtualization: virt,
+      powerPlan,
+      uptime
+    }
   }
 }
 
@@ -76,12 +166,15 @@ export async function getCPUInfo(): Promise<CPUInfo> {
   ])
 
   let temp: number | null = null
+  let coreTemps: number[] = []
   try {
     const temps = await withTimeout(si.cpuTemperature(), SI_TIMEOUT, 'cpuTemperature')
     temp = temps.main ?? null
-  } catch {
-    temp = null
-  }
+    coreTemps = temps.cores ?? []
+  } catch { }
+
+  const perCoreLoad = currentLoad.cpus?.map(c => Math.round(c.load * 100) / 100) ?? []
+  const cache = cpu.cache ?? null
 
   return {
     manufacturer: cpu.manufacturer,
@@ -92,7 +185,17 @@ export async function getCPUInfo(): Promise<CPUInfo> {
     speedMax: cpu.speedMax,
     speedMin: cpu.speedMin,
     usage: Math.round(currentLoad.currentLoad * 100) / 100,
-    temperature: temp
+    temperature: temp,
+    voltage: cpu.voltage ? parseFloat(cpu.voltage) : null,
+    coreTemps,
+    perCoreLoad,
+    cacheL1d: cache?.l1d ?? null,
+    cacheL1i: cache?.l1i ?? null,
+    cacheL2: cache?.l2 ?? null,
+    cacheL3: cache?.l3 ?? null,
+    contextSwitches: currentLoad.ctxSwitches ?? null,
+    interrupts: currentLoad.interrupts ?? null,
+    processCount: currentLoad.processes ?? null,
   }
 }
 
@@ -109,7 +212,9 @@ export async function getRAMInfo(): Promise<RAMInfo> {
     speed: slot.clockSpeed ?? 0,
     manufacturer: slot.manufacturer ?? 'Unknown',
     partNum: slot.partNum ?? '',
-    serialNum: slot.serialNum ?? ''
+    serialNum: slot.serialNum ?? '',
+    formFactor: slot.formFactor ?? null,
+    timings: slot.CAS ?? null,
   }))
 
   return {
@@ -117,7 +222,9 @@ export async function getRAMInfo(): Promise<RAMInfo> {
     used: mem.used,
     free: mem.free,
     usagePercent: Math.round((mem.used / mem.total) * 100 * 100) / 100,
-    slots
+    slots,
+    swapTotal: mem.swaptotal ?? null,
+    swapUsed: mem.swapused ?? null,
   }
 }
 
@@ -125,14 +232,7 @@ export async function getGPUInfo(): Promise<GPUInfo> {
   const graphics = await withTimeout(si.graphics(), SI_TIMEOUT, 'graphics')
 
   if (graphics.controllers.length === 0) {
-    return {
-      model: 'No detectada',
-      vendor: 'N/A',
-      vram: 0,
-      driverVersion: 'N/A',
-      temperature: null,
-      usage: 0
-    }
+    return { model: 'No detectada', vendor: 'N/A', vram: 0, driverVersion: 'N/A', temperature: null, usage: 0 }
   }
 
   const primary = graphics.controllers[0]
@@ -143,96 +243,11 @@ export async function getGPUInfo(): Promise<GPUInfo> {
     vram: primary.vram ?? 0,
     driverVersion: primary.driverVersion ?? 'N/A',
     temperature: primary.temperatureGpu ?? null,
-    usage: primary.utilizationGpu ?? 0
-  }
-}
-
-export async function getStorageInfo(): Promise<import('../../shared/types/hardware.types').StorageInfo[]> {
-  const [disks, fsSize] = await Promise.all([
-    withTimeout(si.diskLayout(), SI_TIMEOUT, 'diskLayout'),
-    withTimeout(si.fsSize(), SI_TIMEOUT, 'fsSize')
-  ])
-
-  return disks.map((disk) => {
-    const fs = fsSize.find(f =>
-      f.fs.includes(disk.device) || disk.device.includes(f.fs.substring(0, 3))
-    )
-    return {
-      device: disk.device,
-      type: disk.type,
-      interfaceType: disk.interfaceType,
-      size: disk.size,
-      used: fs?.used ?? 0,
-      available: fs?.available ?? 0,
-      usagePercent: fs?.use ?? 0,
-      smartStatus: disk.smartStatus ?? 'N/A',
-      temperature: disk.temperature ?? null,
-      hoursUsed: 0,
-      health: null
-    }
-  })
-}
-
-export async function getBatteryInfo(): Promise<import('../../shared/types/hardware.types').BatteryInfo> {
-  const battery = await withTimeout(si.battery(), SI_TIMEOUT, 'battery')
-
-  const wearLevel = battery.maxCapacity && battery.designedCapacity
-    ? Math.round((1 - battery.maxCapacity / battery.designedCapacity) * 100)
-    : 0
-
-  const health = Math.max(0, 100 - wearLevel)
-
-  return {
-    hasBattery: battery.hasBattery,
-    isCharging: battery.isCharging,
-    designCapacity: battery.designedCapacity ?? 0,
-    currentCapacity: battery.currentCapacity ?? 0,
-    maxCapacity: battery.maxCapacity ?? 0,
-    wearLevel,
-    cycleCount: battery.cycleCount ?? 0,
-    voltage: battery.voltage ?? 0,
-    temperature: null,
-    health
-  }
-}
-
-export async function getSensorInfo(): Promise<import('../../shared/types/hardware.types').SensorInfo> {
-  const temps = await withTimeout(si.cpuTemperature(), SI_TIMEOUT, 'cpuTemperature')
-
-  return {
-    cpuTemperature: temps.main ?? null,
-    gpuTemperature: null,
-    storageTemperature: null,
-    cpuVoltage: null,
-    fanSpeed: null
-  }
-}
-
-export async function getWifiInfo(): Promise<import('../../shared/types/hardware.types').WifiInfo> {
-  try {
-    const nets = await withTimeout(si.networkInterfaces(), SI_TIMEOUT, 'networkInterfaces')
-    const wifi = nets.find(n => n.type === 'wireless')
-
-    if (!wifi) {
-      return { adapterPresent: false, adapterName: '', enabled: false, connected: false, ssid: '', signalStrength: 0, availableNetworks: [] }
-    }
-
-    const script = `
-      $wlan = netsh wlan show interfaces | Select-String "SSID\\s*:" | ForEach-Object { $_ -replace ".*:\\s*", "" }
-      if ($wlan) { Write-Output $wlan } else { Write-Output "NotConnected" }
-    `
-    const ssid = await runPowerShell(script)
-
-    return {
-      adapterPresent: true,
-      adapterName: wifi.iface,
-      enabled: wifi.operstate === 'up',
-      connected: wifi.operstate === 'up',
-      ssid: ssid !== 'NotConnected' ? ssid : '',
-      signalStrength: 0,
-      availableNetworks: []
-    }
-  } catch {
-    return { adapterPresent: false, adapterName: '', enabled: false, connected: false, ssid: '', signalStrength: 0, availableNetworks: [] }
+    usage: primary.utilizationGpu ?? 0,
+    coreClock: primary.clockCore ?? null,
+    memoryClock: primary.clockMemory ?? null,
+    powerDraw: primary.powerDraw ?? null,
+    fanSpeed: primary.fanSpeed ?? null,
+    driverDate: primary.driverDate ?? null,
   }
 }

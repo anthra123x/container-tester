@@ -6,7 +6,6 @@ import {
   HardDrive,
   Battery,
   Play,
-  FileText,
   Monitor,
   Activity,
 } from 'lucide-react'
@@ -127,14 +126,6 @@ export function Dashboard() {
             onClick={() => navigate('/diagnostic/auto')}
           >
             Iniciar Diagnóstico Completo
-          </Button>
-          <Button
-            variant="outline"
-            size="lg"
-            icon={<FileText className="w-5 h-5" />}
-            onClick={() => navigate('/reports')}
-          >
-            Ver Último Reporte
           </Button>
         </motion.div>
 

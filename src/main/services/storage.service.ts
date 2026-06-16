@@ -1,5 +1,5 @@
 import si from 'systeminformation'
-import { execSync } from 'child_process'
+import { runPowerShellWithRetry, runPowerShellJson } from './powershell'
 
 export interface StorageInfo {
   device: string
@@ -13,68 +13,131 @@ export interface StorageInfo {
   temperature: number | null
   hoursUsed: number | null
   health: number | null
-}
-
-function runPowerShell(command: string): string {
-  try {
-    return execSync(`powershell -NoProfile -Command "${command.replace(/"/g, '\\"')}"`, {
-      encoding: 'utf-8',
-      timeout: 10000
-    }).trim()
-  } catch {
-    return ''
-  }
+  reallocatedSectors: number | null
+  pendingSectors: number | null
+  crcErrors: number | null
+  ssdWear: number | null
+  totalWritesGB: number | null
+  totalReadsGB: number | null
+  partitionCount: number | null
+  isBootDrive: boolean
+  nvmePcieLanes: string | null
+  formFactor: string | null
+  serialNumber: string | null
+  firmware: string | null
 }
 
 function convertBytes(bytes: number): number {
   return Math.round((bytes / (1024 * 1024 * 1024)) * 100) / 100
 }
 
-function getSMARTInfo(deviceIndex: number): { smartStatus: string; temperature: number | null; hoursUsed: number | null; health: number | null } {
-  try {
-    const info = runPowerShell(`Get-PhysicalDisk -DeviceNumber ${deviceIndex} | Select-Object HealthStatus,MediaUsage,Temperature | ConvertTo-Json`)
-    if (info) {
+interface PSPhysicalDisk {
+  DeviceID?: string
+  FriendlyName?: string
+  MediaType?: string
+  BusType?: string
+  HealthStatus?: string
+  PhysicalLocation?: string
+  Manufacturer?: string
+  SerialNumber?: string
+  FirmwareVersion?: string
+  Size?: number
+  OperationalStatus?: string | string[]
+}
+
+interface PSSMARTData {
+  ReallocatedSectorCount?: number
+  PendingSectorCount?: number
+  CRCCount?: number
+  WearLevel?: number
+  PowerOnHours?: number
+  MediaWear?: number
+  Temperature?: number
+  ReadGB?: number
+  WriteGB?: number
+}
+
+interface PSDriveIO {
+  reads?: number
+  writes?: number
+}
+
+async function getDiskSMARTDetailed(deviceIndex: number): Promise<PSSMARTData | null> {
+  const script = `
+    $disk = Get-PhysicalDisk -DeviceNumber ${deviceIndex} -ErrorAction SilentlyContinue
+    if (-not $disk) { return "null" }
+    $result = [PSCustomObject]@{
+      ReallocatedSectorCount = try {
+        ($disk | Get-PhysicalDisk | Get-StorageReliabilityCounter | Select-Object -ExpandProperty ReadErrorsUncorrected -ErrorAction SilentlyContinue)
+      } catch { $null }
+      PendingSectorCount = try {
+        ($disk | Get-PhysicalDisk | Get-StorageReliabilityCounter | Select-Object -ExpandProperty StaleReadRetries -ErrorAction SilentlyContinue)
+      } catch { $null }
+      PowerOnHours = try {
+        ($disk | Get-PhysicalDisk | Get-StorageReliabilityCounter | Select-Object -ExpandProperty PowerOnHours -ErrorAction SilentlyContinue)
+      } catch { $null }
+      Temperature = try {
+        ($disk | Select-Object -ExpandProperty Temperature -ErrorAction SilentlyContinue)
+      } catch { $null }
+      WearLevel = try {
+        ($disk | Get-PhysicalDisk | Get-StorageReliabilityCounter | Select-Object -ExpandProperty Wear -ErrorAction SilentlyContinue)
+      } catch { $null }
+    }
+    $result | ConvertTo-Json -Compress
+  `
+  return runPowerShellWithRetry<PSSMARTData>(script, JSON.parse)
+}
+
+async function getDiskIOStats(deviceIndex: number): Promise<{ readsGB: number | null; writesGB: number | null }> {
+  const script = `
+    $drive = Get-CimInstance Win32_DiskDrive -Filter "Index = ${deviceIndex}" -ErrorAction SilentlyContinue
+    if (-not $drive) { return "null" }
+    $reads = [math]::Round($drive.TotalSectors * $drive.BytesPerSector / 1GB, 2)
+    $writes = try {
+      $perf = Get-CimInstance Win32_PerfRawData_PerfDisk_PhysicalDisk -Filter "Name LIKE '${deviceIndex}:%'" -ErrorAction SilentlyContinue
+      if ($perf) { [math]::Round($perf.DiskWriteBytesPerSec / 1GB, 2) } else { $null }
+    } catch { $null }
+    return "{ ""ReadGB"": $reads, ""WriteGB"": $writes }"
+  `
+  return runPowerShellWithRetry<{ readsGB: number | null; writesGB: number | null }>(
+    script,
+    JSON.parse
+  ) ?? { readsGB: null, writesGB: null }
+}
+
+async function getDiskSMARTFallback(deviceIndex: number): Promise<{
+  smartStatus: string; temperature: number | null; health: number | null
+}> {
+  const info = await runPowerShellWithRetry<string>(
+    `Get-PhysicalDisk -DeviceNumber ${deviceIndex} | Select-Object HealthStatus,Temperature | ConvertTo-Json -Compress`,
+    (r) => r
+  )
+  if (info) {
+    try {
       const parsed = JSON.parse(info)
-      const healthMap: Record<string, number> = {
-        'Healthy': 100,
-        'Warning': 70,
-        'Unhealthy': 30,
-        'Unknown': null as unknown as number
-      }
-      const usageMap: Record<string, number> = {
-        '0': 0,
-        '1': 1,
-        '3': 2,
-        '4': 3,
-        '5': 4
-      }
-      const typeMap: Record<string, string> = {
-        '0': 'HDD',
-        '1': 'SSD',
-        '4': 'NVMe',
-        '3': 'SSD'
-      }
+      const healthMap: Record<string, number> = { Healthy: 100, Warning: 70, Unhealthy: 30 }
       return {
         smartStatus: parsed.HealthStatus || 'Unknown',
-        temperature: parsed.Temperature !== undefined ? parsed.Temperature : null,
-        hoursUsed: parsed.MediaUsage !== undefined ? usageMap[String(parsed.MediaUsage)] ?? null : null,
+        temperature: parsed.Temperature ?? null,
         health: healthMap[parsed.HealthStatus] ?? null
       }
-    }
-    const wmi = runPowerShell(`Get-WmiObject Win32_DiskDrive | Select-Object -Index ${deviceIndex} | Select-Object Status,Model | ConvertTo-Json`)
-    if (wmi) {
+    } catch { }
+  }
+  const wmi = await runPowerShellWithRetry<string>(
+    `Get-WmiObject Win32_DiskDrive | Select-Object -Index ${deviceIndex} | Select-Object Status,Model | ConvertTo-Json -Compress`,
+    (r) => r
+  )
+  if (wmi) {
+    try {
       const parsed = JSON.parse(wmi)
       return {
         smartStatus: parsed.Status || 'Unknown',
         temperature: null,
-        hoursUsed: null,
         health: parsed.Status === 'OK' ? 100 : 50
       }
-    }
-  } catch {
-    // fallback
+    } catch { }
   }
-  return { smartStatus: 'Unknown', temperature: null, hoursUsed: null, health: null }
+  return { smartStatus: 'Unknown', temperature: null, health: null }
 }
 
 export async function getStorageInfo(): Promise<StorageInfo[]> {
@@ -95,8 +158,9 @@ export async function getStorageInfo(): Promise<StorageInfo[]> {
   const results: StorageInfo[] = []
   for (let index = 0; index < diskLayout.length; index++) {
     const disk = diskLayout[index]
-    const deviceName = disk.name || `PhysicalDrive${index}`
-    const smart = getSMARTInfo(index)
+    const smartDetail = await getDiskSMARTDetailed(index)
+    const ioStats = await getDiskIOStats(index)
+    const fallback = await getDiskSMARTFallback(index)
 
     let matchedFs = { used: 0, available: 0 }
     const diskIdentifier = disk.device?.toLowerCase() || ''
@@ -120,8 +184,26 @@ export async function getStorageInfo(): Promise<StorageInfo[]> {
       type = disk.type
     }
 
+    const isBootDrive = index === 0 || (disk.device?.toLowerCase() || '').includes('c:')
+
+    let nvmePcieLanes: string | null = null
+    if (type === 'NVMe') {
+      try {
+        const nvme = await runPowerShellWithRetry<string>(
+          `Get-PhysicalDisk -DeviceNumber ${index} | Get-StorageReliabilityCounter | Select-Object * | ConvertTo-Json -Compress`,
+          (r) => r
+        )
+        if (nvme) {
+          const parsed = JSON.parse(nvme)
+          if (parsed.NVMeMaxLanes || parsed.NVMeMaxSpeed) {
+            nvmePcieLanes = `${parsed.NVMeMaxSpeed || '?'} GT/s x${parsed.NVMeMaxLanes || '?'}`
+          }
+        }
+      } catch { }
+    }
+
     results.push({
-      device: deviceName,
+      device: disk.name || `PhysicalDrive${index}`,
       type,
       interfaceType,
       sizeGB: convertBytes(disk.size || 0),
@@ -130,10 +212,22 @@ export async function getStorageInfo(): Promise<StorageInfo[]> {
       usagePercent: matchedFs.used + matchedFs.available > 0
         ? Math.round((matchedFs.used / (matchedFs.used + matchedFs.available)) * 10000) / 100
         : 0,
-      smartStatus: smart.smartStatus,
-      temperature: smart.temperature,
-      hoursUsed: smart.hoursUsed,
-      health: smart.health
+      smartStatus: fallback.smartStatus,
+      temperature: smartDetail?.Temperature ?? fallback.temperature ?? (disk.temperature ?? null),
+      hoursUsed: smartDetail?.PowerOnHours ?? null,
+      health: fallback.health,
+      reallocatedSectors: smartDetail?.ReallocatedSectorCount ?? null,
+      pendingSectors: smartDetail?.PendingSectorCount ?? null,
+      crcErrors: smartDetail?.CRCCount ?? null,
+      ssdWear: smartDetail?.WearLevel ?? null,
+      totalWritesGB: ioStats?.writesGB ?? null,
+      totalReadsGB: ioStats?.readsGB ?? null,
+      partitionCount: null,
+      isBootDrive,
+      nvmePcieLanes,
+      formFactor: disk.formFactor || null,
+      serialNumber: disk.serialNum || null,
+      firmware: disk.firmwareRevision || null,
     })
   }
 

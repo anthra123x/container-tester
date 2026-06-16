@@ -5,6 +5,14 @@ export interface SystemInfo {
   manufacturer: string
   os: OSInfo
   motherboard: MotherboardInfo
+  extraSystem?: {
+    edition: string | null
+    secureBoot: boolean | null
+    tpm: { present: boolean; version: string | null; enabled: boolean | null } | null
+    virtualization: { supported: boolean | null; enabled: boolean | null; hypervisorPresent: boolean | null }
+    powerPlan: string | null
+    uptime: { seconds: number; days: number; hours: number; minutes: number }
+  }
 }
 
 export interface OSInfo {
@@ -36,6 +44,16 @@ export interface CPUInfo {
   speedMin: number
   usage: number
   temperature: number | null
+  voltage?: number | null
+  coreTemps?: number[]
+  perCoreLoad?: number[]
+  cacheL1d?: number | null
+  cacheL1i?: number | null
+  cacheL2?: number | null
+  cacheL3?: number | null
+  contextSwitches?: number | null
+  interrupts?: number | null
+  processCount?: number | null
 }
 
 export interface RAMInfo {
@@ -44,6 +62,8 @@ export interface RAMInfo {
   free: number
   usagePercent: number
   slots: RAMSlot[]
+  swapTotal?: number | null
+  swapUsed?: number | null
 }
 
 export interface RAMSlot {
@@ -54,6 +74,8 @@ export interface RAMSlot {
   manufacturer: string
   partNum: string
   serialNum: string
+  formFactor?: string | null
+  timings?: string | null
 }
 
 export interface GPUInfo {
@@ -63,6 +85,11 @@ export interface GPUInfo {
   driverVersion: string
   temperature: number | null
   usage: number
+  coreClock?: number | null
+  memoryClock?: number | null
+  powerDraw?: number | null
+  fanSpeed?: number | null
+  driverDate?: string | null
 }
 
 export interface StorageInfo {
@@ -98,12 +125,6 @@ export interface SensorInfo {
   storageTemperature: number | null
   cpuVoltage: number | null
   fanSpeed: number | null
-}
-
-export interface NetworkInfo {
-  wifi: WifiInfo
-  bluetooth: BluetoothInfo
-  ethernet: EthernetInfo
 }
 
 export interface WifiInfo {

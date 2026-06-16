@@ -1,7 +1,10 @@
 import { ipcMain } from 'electron'
 import si from 'systeminformation'
 import { IPC_CHANNELS } from '../../shared/constants/ipc-channels'
-import { getStorageInfo, getBatteryInfo, getSensorInfo, getWifiInfo } from '../services/system-info.service'
+import { getStorageInfo } from '../services/storage.service'
+import { getBatteryInfo } from '../services/battery.service'
+import { getSensorInfo } from '../services/sensor.service'
+import { getWifiInfo } from '../services/network.service'
 
 export function registerHardwareIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.STORAGE_GET_INFO, async () => {
