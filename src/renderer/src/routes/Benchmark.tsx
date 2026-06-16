@@ -11,6 +11,7 @@ import {
   CheckCircle2,
   ArrowRight,
   RotateCcw,
+  Info,
 } from 'lucide-react'
 import { useIpc } from '../hooks/useIpc'
 import { IPC_CHANNELS } from '../../../shared/constants/ipc-channels'
@@ -20,6 +21,7 @@ interface BenchmarkPhaseResult {
   score: number
   rating: string
   details: string
+  metrics: Record<string, string | number>
 }
 
 interface BenchmarkData {
@@ -35,6 +37,13 @@ const phasesMeta = [
   { key: 'disk', icon: HardDrive, color: 'from-cyan-500/20 to-sky-500/10', border: 'border-cyan-200/50', textColor: 'text-cyan-700', label: 'Disco', bg: 'bg-cyan-50' },
 ]
 
+const SCALE_INFO = [
+  { range: '0 – 1,999', label: 'Bajo', desc: 'Equipo básico o muy antiguo' },
+  { range: '2,000 – 4,499', label: 'Regular', desc: 'Rendimiento de entrada' },
+  { range: '4,500 – 7,499', label: 'Bueno', desc: 'PC moderno de gama media' },
+  { range: '7,500 – 10,000', label: 'Excelente', desc: 'Alto rendimiento' },
+]
+
 function ratingColor(rating: string): string {
   if (rating === 'Excelente') return 'text-emerald-600 bg-emerald-50 border-emerald-200'
   if (rating === 'Bueno') return 'text-blue-600 bg-blue-50 border-blue-200'
@@ -47,18 +56,25 @@ function ratingIcon(rating: string) {
   return <AlertCircle className="w-4 h-4" />
 }
 
+function MetricRow({ label, value }: { label: string; value: string | number }) {
+  return (
+    <div className="flex items-center justify-between py-1 border-b border-neutral-100 last:border-0">
+      <span className="text-xs text-neutral-500">{label}</span>
+      <span className="text-xs font-semibold text-primary-800">{value}</span>
+    </div>
+  )
+}
+
 function PhaseCard({
   meta,
   result,
   running,
   progress,
-  current,
 }: {
   meta: typeof phasesMeta[0]
   result?: BenchmarkPhaseResult
   running: boolean
   progress: number
-  current: boolean
 }) {
   const Icon = meta.icon
 
@@ -66,21 +82,17 @@ function PhaseCard({
     <motion.div
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
-      className={`rounded-xl p-5 border ${meta.color} ${meta.border} bg-white shadow-sm ${current ? 'ring-2 ring-primary-400 ring-offset-2' : ''}`}
+      className={`rounded-xl p-5 border ${meta.color} ${meta.border} bg-white shadow-sm`}
     >
       <div className="flex items-center gap-3 mb-3">
         <div className={`p-2 rounded-xl ${meta.bg}`}>
           <Icon className={`w-5 h-5 ${meta.textColor}`} />
         </div>
-        <div>
+        <div className="flex-1">
           <h3 className="font-bold text-sm text-primary-900">{meta.label}</h3>
           {running && <p className="text-xs text-neutral-500">{progress}%</p>}
         </div>
-        {running && (
-          <div className="ml-auto">
-            <Loader2 className="w-5 h-5 text-primary-500 animate-spin" />
-          </div>
-        )}
+        {running && <Loader2 className="w-5 h-5 text-primary-500 animate-spin" />}
       </div>
 
       {running && (
@@ -95,9 +107,9 @@ function PhaseCard({
       )}
 
       {result && (
-        <div className="space-y-2">
+        <div className="space-y-3">
           <div className="flex items-center gap-2">
-            <span className="text-2xl font-extrabold text-primary-900">{result.score}</span>
+            <span className="text-2xl font-extrabold text-primary-900">{result.score.toLocaleString()}</span>
             <span className="text-xs text-neutral-400">pts</span>
             <span className={`ml-auto flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold border ${ratingColor(result.rating)}`}>
               {ratingIcon(result.rating)}
@@ -105,6 +117,11 @@ function PhaseCard({
             </span>
           </div>
           <p className="text-xs text-neutral-600 leading-relaxed">{result.details}</p>
+          <div className="bg-neutral-50/80 rounded-lg p-2.5 border border-neutral-100">
+            {Object.entries(result.metrics).map(([label, value]) => (
+              <MetricRow key={label} label={label} value={value} />
+            ))}
+          </div>
         </div>
       )}
     </motion.div>
@@ -117,6 +134,7 @@ export function Benchmark() {
   const [progress, setProgress] = useState({ cpu: 0, memory: 0, disk: 0 })
   const [result, setResult] = useState<BenchmarkData | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [showScale, setShowScale] = useState(false)
   const mountedRef = useRef(true)
 
   useEffect(() => {
@@ -170,7 +188,7 @@ export function Benchmark() {
             <div>
               <h1 className="text-2xl font-bold text-primary-900">Benchmark</h1>
               <p className="text-sm text-neutral-500">
-                Evalúa el rendimiento de CPU, memoria y almacenamiento con pruebas de estrés
+                Prueba de estrés real con cálculos en paralelo, acceso intensivo a memoria y E/S de disco
               </p>
             </div>
           </div>
@@ -187,13 +205,57 @@ export function Benchmark() {
                 <Gauge className="w-10 h-10 text-red-500" />
               </div>
               <h3 className="text-lg font-bold text-primary-800 mb-2">Prueba de Rendimiento</h3>
-              <p className="text-sm text-neutral-600 mb-6 max-w-lg mx-auto leading-relaxed">
-                Esta prueba estresará tu equipo para evaluar su rendimiento real.
-                <strong className="block mt-2 text-amber-700">Recomendación: cierra otras aplicaciones antes de ejecutar.</strong>
+              <p className="text-sm text-neutral-600 mb-4 max-w-lg mx-auto leading-relaxed">
+                Esta prueba estresa tu equipo al máximo para medir su rendimiento real.
+                <strong className="block mt-2 text-amber-700">Cierra otras aplicaciones antes de ejecutar. El proceso puede tomar 1-2 minutos.</strong>
               </p>
+
+              <div className="flex flex-wrap items-center justify-center gap-3 mb-6">
+                <div className="text-xs text-neutral-500 bg-neutral-100 px-3 py-1.5 rounded-lg border border-neutral-200">
+                  CPU: <strong>{'<='}16 hilos</strong>
+                </div>
+                <div className="text-xs text-neutral-500 bg-neutral-100 px-3 py-1.5 rounded-lg border border-neutral-200">
+                  RAM: <strong>hasta 1 GB</strong>
+                </div>
+                <div className="text-xs text-neutral-500 bg-neutral-100 px-3 py-1.5 rounded-lg border border-neutral-200">
+                  Disco: <strong>200 MB temp</strong>
+                </div>
+              </div>
+
               <Button size="lg" icon={<Gauge className="w-5 h-5" />} onClick={runFull}>
-                Iniciar Benchmark Completo <ArrowRight className="w-4 h-4" />
+                Iniciar Benchmark <ArrowRight className="w-4 h-4" />
               </Button>
+
+              <button
+                onClick={() => setShowScale(!showScale)}
+                className="flex items-center gap-1.5 mx-auto mt-4 text-xs text-neutral-400 hover:text-neutral-600 transition-colors"
+              >
+                <Info className="w-3.5 h-3.5" />
+                {showScale ? 'Ocultar' : 'Ver'} escala de puntuación
+              </button>
+
+              {showScale && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: 'auto' }}
+                  className="mt-4 bg-white rounded-xl border border-neutral-200 p-4 text-left max-w-md mx-auto"
+                >
+                  <h4 className="text-xs font-bold text-primary-800 uppercase tracking-wider mb-2">Escala de referencia</h4>
+                  <div className="space-y-1.5">
+                    {SCALE_INFO.map(s => {
+                      const [color] = ratingColor(s.label).split(' ')
+                      return (
+                        <div key={s.label} className="flex items-center gap-2 text-xs">
+                          <span className={`w-2 h-2 rounded-full ${color}`} />
+                          <span className="font-mono text-neutral-500 w-24">{s.range}</span>
+                          <span className="font-semibold text-primary-800 w-16">{s.label}</span>
+                          <span className="text-neutral-400">{s.desc}</span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </motion.div>
+              )}
             </div>
           )}
 
@@ -203,8 +265,7 @@ export function Benchmark() {
                 <PhaseCard
                   key={m.key}
                   meta={m}
-                  running={true}
-                  current={false}
+                  running
                   progress={progress[m.key as keyof typeof progress]}
                 />
               ))}
@@ -233,14 +294,14 @@ export function Benchmark() {
                   <div className="p-2 bg-white/20 rounded-xl">
                     <Trophy className="w-6 h-6" />
                   </div>
-                  <div>
+                  <div className="flex-1">
                     <h2 className="text-lg font-bold">Resultado General</h2>
                     <p className="text-sm text-primary-200">{result.overall.summary}</p>
                   </div>
                 </div>
                 <div className="flex items-end gap-3">
-                  <span className="text-5xl font-extrabold tracking-tight">{result.overall.score}</span>
-                  <span className="text-primary-200 mb-1">pts</span>
+                  <span className="text-5xl font-extrabold tracking-tight">{result.overall.score.toLocaleString()}</span>
+                  <span className="text-primary-200 mb-1">/ 10,000 pts</span>
                   <span className="ml-auto self-center flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-bold border bg-white/15 border-white/20">
                     {ratingIcon(result.overall.rating)}
                     {result.overall.rating}
@@ -255,7 +316,6 @@ export function Benchmark() {
                     meta={m}
                     result={result[m.key as keyof BenchmarkData] as BenchmarkPhaseResult}
                     running={false}
-                    current={false}
                     progress={100}
                   />
                 ))}
