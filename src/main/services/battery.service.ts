@@ -1,6 +1,17 @@
 import si from 'systeminformation'
 import { runPowerShellJson, runPowerShellWithRetry } from './powershell'
 
+const SI_TIMEOUT = 8000
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)
+    ),
+  ])
+}
+
 export interface BatteryInfo {
   hasBattery: boolean
   isCharging: boolean
@@ -76,7 +87,10 @@ async function getBatteryRuntime(): Promise<{ estimatedRuntime: number | null; c
 }
 
 export async function getBatteryInfo(): Promise<BatteryInfo> {
-  const battery = await si.battery()
+  const battery = await withTimeout(si.battery(), SI_TIMEOUT, 'battery').catch(() => ({
+    hasBattery: false, isCharging: false, maxCapacity: null, currentCapacity: null,
+    designedCapacity: null, cycleCount: null, voltage: null, acConnected: false
+  }))
   const { designed, fullCharged } = await getBatteryFullChargedCapacity()
   const staticData = await getBatteryStaticData()
   const runtime = await getBatteryRuntime()

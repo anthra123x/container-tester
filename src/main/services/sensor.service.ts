@@ -1,6 +1,18 @@
 import si from 'systeminformation'
 import { runPowerShellWithRetry } from './powershell'
 
+const PS_TIMEOUT = 5000
+const SI_TIMEOUT = 8000
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)
+    ),
+  ])
+}
+
 export interface FanInfo {
   name: string
   rpm: number | null
@@ -70,17 +82,20 @@ async function getMotherboardSensors(): Promise<{
     $voltageRails += [PSCustomObject]@{ Name = "DRAM"; Voltage = $null }
     $voltageRails | ConvertTo-Json -Compress
   `
-  const [mbResult, vrResult] = await Promise.all([
+  const [mbResult, vrResult] = await Promise.allSettled([
     runPowerShellWithRetry<string>(script, (r) => r),
     runPowerShellWithRetry<string>(momboScript, (r) => r)
   ])
 
+  const mbString = mbResult.status === 'fulfilled' ? mbResult.value : null
+  const vrString = vrResult.status === 'fulfilled' ? vrResult.value : null
+
   let motherboardTemp: number | null = null
   let chipsetTemp: number | null = null
 
-  if (mbResult && mbResult !== '[]') {
+  if (mbString && mbString !== '[]') {
     try {
-      const zones = JSON.parse(mbResult)
+      const zones = JSON.parse(mbString)
       if (Array.isArray(zones)) {
         for (const z of zones) {
           const name = (z.Name || '').toLowerCase()
@@ -100,9 +115,9 @@ async function getMotherboardSensors(): Promise<{
   }
 
   let voltageRails: VoltageRail[] = []
-  if (vrResult) {
+  if (vrString) {
     try {
-      const parsed = JSON.parse(vrResult)
+      const parsed = JSON.parse(vrString)
       voltageRails = Array.isArray(parsed) ? parsed : []
     } catch { }
   }
@@ -142,23 +157,17 @@ async function getFanSpeeds(): Promise<FanInfo[]> {
 }
 
 export async function getSensorInfo(): Promise<SensorInfo> {
-  const [cpuTemp, graphics, diskLayout, mbSensors, fanSpeeds] = await Promise.allSettled([
-    si.cpuTemperature(),
-    si.graphics(),
-    si.diskLayout(),
+  const [cpuTemp, diskLayout, mbSensors, fanSpeeds] = await Promise.allSettled([
+    withTimeout(si.cpuTemperature(), SI_TIMEOUT, 'cpuTemperature'),
+    withTimeout(si.diskLayout(), SI_TIMEOUT, 'diskLayout'),
     getMotherboardSensors(),
     getFanSpeeds()
   ])
 
   const cpuTempVal = cpuTemp.status === 'fulfilled' ? cpuTemp.value : { main: null, cores: [], max: null, package: null }
-  const graphicsVal = graphics.status === 'fulfilled' ? graphics.value : { controllers: [] }
   const diskLayoutVal = diskLayout.status === 'fulfilled' ? diskLayout.value : []
   const mbSensorsVal = mbSensors.status === 'fulfilled' ? mbSensors.value : { motherboardTemp: null, chipsetTemp: null, voltageRails: [] }
   const fanSpeedsVal = fanSpeeds.status === 'fulfilled' ? fanSpeeds.value : []
-
-  const gpuController = graphicsVal.controllers?.length > 0
-    ? graphicsVal.controllers[0]
-    : null
 
   const storageTemps: { device: string; temperature: number | null }[] = []
   for (const disk of diskLayoutVal) {
@@ -176,14 +185,14 @@ export async function getSensorInfo(): Promise<SensorInfo> {
       packageTemp: cpuTempVal.package ?? null
     },
     gpu: {
-      temperature: gpuController?.temperatureGpu ?? null,
+      temperature: null,
       hotspotTemp: null,
       memoryTemp: null,
-      coreClock: gpuController?.clockCore ?? null,
-      memoryClock: gpuController?.clockMemory ?? null,
+      coreClock: null,
+      memoryClock: null,
       fanSpeed: null,
       fanPercent: null,
-      powerDraw: gpuController?.powerDraw ?? null
+      powerDraw: null
     },
     storage: storageTemps,
     motherboard: {

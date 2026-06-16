@@ -1,5 +1,16 @@
 import si from 'systeminformation'
 
+const SI_TIMEOUT = 8000
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)
+    ),
+  ])
+}
+
 export interface WifiInfo {
   networks: WifiNetwork[]
   interfaces: WifiInterface[]
@@ -60,13 +71,16 @@ export interface EthernetInterface {
 }
 
 export async function getWifiInfo(): Promise<WifiInfo> {
-  const [networks, interfaces] = await Promise.all([
-    si.wifiNetworks().catch(() => []),
-    si.wifiInterfaces().catch(() => [])
+  const [networks, interfaces] = await Promise.allSettled([
+    withTimeout(si.wifiNetworks(), SI_TIMEOUT, 'wifiNetworks'),
+    withTimeout(si.wifiInterfaces(), SI_TIMEOUT, 'wifiInterfaces')
   ])
 
+  const nets = networks.status === 'fulfilled' ? networks.value : []
+  const ifaces = interfaces.status === 'fulfilled' ? interfaces.value : []
+
   return {
-    networks: networks.map(n => ({
+    networks: nets.map(n => ({
       ssid: n.ssid || 'Unknown',
       bssid: n.bssid || '',
       mode: n.mode || '',
@@ -78,7 +92,7 @@ export async function getWifiInfo(): Promise<WifiInfo> {
       wpaFlags: (n.wpaFlags || []).join(', '),
       rsnFlags: (n.rsnFlags || []).join(', ')
     })),
-    interfaces: interfaces.map(i => ({
+    interfaces: ifaces.map(i => ({
       id: i.id || '',
       iface: i.iface || '',
       model: i.model || '',
@@ -89,7 +103,7 @@ export async function getWifiInfo(): Promise<WifiInfo> {
 }
 
 export async function getBluetoothInfo(): Promise<BluetoothInfo> {
-  const btDevices = await si.bluetoothDevices().catch(() => [])
+  const btDevices = await withTimeout(si.bluetoothDevices(), SI_TIMEOUT, 'bluetoothDevices').catch(() => [])
 
   return {
     devices: btDevices.map(d => ({
@@ -105,7 +119,7 @@ export async function getBluetoothInfo(): Promise<BluetoothInfo> {
 }
 
 export async function getEthernetInfo(): Promise<EthernetInfo> {
-  const networkInterfaces = await si.networkInterfaces().catch(() => [])
+  const networkInterfaces = await withTimeout(si.networkInterfaces(), SI_TIMEOUT, 'networkInterfaces').catch(() => [])
 
   return {
     interfaces: networkInterfaces

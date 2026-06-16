@@ -1,5 +1,17 @@
 import si from 'systeminformation'
-import { runPowerShellWithRetry, runPowerShellJson } from './powershell'
+import { runPowerShellWithRetry } from './powershell'
+
+const SI_TIMEOUT = 8000
+const PS_DISK_TIMEOUT = 5000
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)
+    ),
+  ])
+}
 
 export interface StorageInfo {
   device: string
@@ -85,7 +97,7 @@ async function getDiskSMARTDetailed(deviceIndex: number): Promise<PSSMARTData | 
     }
     $result | ConvertTo-Json -Compress
   `
-  return runPowerShellWithRetry<PSSMARTData>(script, JSON.parse)
+  return runPowerShellWithRetry<PSSMARTData>(script, JSON.parse, 2, PS_DISK_TIMEOUT)
 }
 
 async function getDiskIOStats(deviceIndex: number): Promise<{ readsGB: number | null; writesGB: number | null }> {
@@ -101,7 +113,9 @@ async function getDiskIOStats(deviceIndex: number): Promise<{ readsGB: number | 
   `
   const result = await runPowerShellWithRetry<{ readsGB: number | null; writesGB: number | null }>(
     script,
-    JSON.parse
+    JSON.parse,
+    2,
+    PS_DISK_TIMEOUT
   )
   return result ?? { readsGB: null, writesGB: null }
 }
@@ -111,7 +125,9 @@ async function getDiskSMARTFallback(deviceIndex: number): Promise<{
 }> {
   const info = await runPowerShellWithRetry<string>(
     `Get-PhysicalDisk -DeviceNumber ${deviceIndex} | Select-Object HealthStatus,Temperature | ConvertTo-Json -Compress`,
-    (r) => r
+    (r) => r,
+    2,
+    PS_DISK_TIMEOUT
   )
   if (info) {
     try {
@@ -126,7 +142,9 @@ async function getDiskSMARTFallback(deviceIndex: number): Promise<{
   }
   const wmi = await runPowerShellWithRetry<string>(
     `Get-WmiObject Win32_DiskDrive | Select-Object -Index ${deviceIndex} | Select-Object Status,Model | ConvertTo-Json -Compress`,
-    (r) => r
+    (r) => r,
+    2,
+    PS_DISK_TIMEOUT
   )
   if (wmi) {
     try {
@@ -143,8 +161,8 @@ async function getDiskSMARTFallback(deviceIndex: number): Promise<{
 
 export async function getStorageInfo(): Promise<StorageInfo[]> {
   const [diskLayout, fsSize] = await Promise.allSettled([
-    si.diskLayout(),
-    si.fsSize()
+    withTimeout(si.diskLayout(), SI_TIMEOUT, 'diskLayout'),
+    withTimeout(si.fsSize(), SI_TIMEOUT, 'fsSize')
   ])
 
   const diskLayoutVal = diskLayout.status === 'fulfilled' ? diskLayout.value : []
@@ -158,12 +176,16 @@ export async function getStorageInfo(): Promise<StorageInfo[]> {
     }
   }
 
-  const results: StorageInfo[] = []
-  for (let index = 0; index < diskLayoutVal.length; index++) {
-    const disk = diskLayoutVal[index]
-    const smartDetail = await getDiskSMARTDetailed(index)
-    const ioStats = await getDiskIOStats(index)
-    const fallback = await getDiskSMARTFallback(index)
+  const diskPromises = diskLayoutVal.map(async (disk: any, index: number) => {
+    const [smartDetail, ioStats, fallback] = await Promise.allSettled([
+      getDiskSMARTDetailed(index),
+      getDiskIOStats(index),
+      getDiskSMARTFallback(index)
+    ])
+
+    const smartVal = smartDetail.status === 'fulfilled' ? smartDetail.value : null
+    const ioVal = ioStats.status === 'fulfilled' ? ioStats.value : null
+    const fallbackVal = fallback.status === 'fulfilled' ? fallback.value : null
 
     let matchedFs = { used: 0, available: 0 }
     const diskIdentifier = disk.device?.toLowerCase() || ''
@@ -194,7 +216,9 @@ export async function getStorageInfo(): Promise<StorageInfo[]> {
       try {
         const nvme = await runPowerShellWithRetry<string>(
           `Get-PhysicalDisk -DeviceNumber ${index} | Get-StorageReliabilityCounter | Select-Object * | ConvertTo-Json -Compress`,
-          (r) => r
+          (r) => r,
+          1,
+          PS_DISK_TIMEOUT
         )
         if (nvme) {
           const parsed = JSON.parse(nvme)
@@ -205,7 +229,7 @@ export async function getStorageInfo(): Promise<StorageInfo[]> {
       } catch { }
     }
 
-    results.push({
+    return {
       device: disk.name || `PhysicalDrive${index}`,
       type,
       interfaceType,
@@ -215,24 +239,27 @@ export async function getStorageInfo(): Promise<StorageInfo[]> {
       usagePercent: matchedFs.used + matchedFs.available > 0
         ? Math.round((matchedFs.used / (matchedFs.used + matchedFs.available)) * 10000) / 100
         : 0,
-      smartStatus: fallback.smartStatus,
-      temperature: smartDetail?.Temperature ?? fallback.temperature ?? (disk.temperature ?? null),
-      hoursUsed: smartDetail?.PowerOnHours ?? null,
-      health: fallback.health,
-      reallocatedSectors: smartDetail?.ReallocatedSectorCount ?? null,
-      pendingSectors: smartDetail?.PendingSectorCount ?? null,
-      crcErrors: smartDetail?.CRCCount ?? null,
-      ssdWear: smartDetail?.WearLevel ?? null,
-      totalWritesGB: ioStats?.writesGB ?? null,
-      totalReadsGB: ioStats?.readsGB ?? null,
+      smartStatus: fallbackVal?.smartStatus ?? 'Unknown',
+      temperature: smartVal?.Temperature ?? fallbackVal?.temperature ?? (disk.temperature ?? null),
+      hoursUsed: smartVal?.PowerOnHours ?? null,
+      health: fallbackVal?.health ?? null,
+      reallocatedSectors: smartVal?.ReallocatedSectorCount ?? null,
+      pendingSectors: smartVal?.PendingSectorCount ?? null,
+      crcErrors: smartVal?.CRCCount ?? null,
+      ssdWear: smartVal?.WearLevel ?? null,
+      totalWritesGB: ioVal?.writesGB ?? null,
+      totalReadsGB: ioVal?.readsGB ?? null,
       partitionCount: null,
       isBootDrive,
       nvmePcieLanes,
       formFactor: disk.formFactor || null,
       serialNumber: disk.serialNum || null,
       firmware: disk.firmwareRevision || null,
-    })
-  }
+    }
+  })
 
-  return results
+  const settled = await Promise.allSettled(diskPromises)
+  return settled
+    .filter(r => r.status === 'fulfilled')
+    .map(r => (r as PromiseFulfilledResult<StorageInfo>).value)
 }

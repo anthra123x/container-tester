@@ -6,6 +6,17 @@ import { getStorageInfo } from '../services/storage.service'
 import { getBatteryInfo } from '../services/battery.service'
 import { getSensorInfo } from '../services/sensor.service'
 import { runPowerShellWithRetry } from '../services/powershell'
+
+const DIAG_TIMEOUT = 10000
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)
+    ),
+  ])
+}
 import si from 'systeminformation'
 
 function result(id: string, category: DiagnosticResult['category'], testName: string, status: TestStatus, value: string, details?: Record<string, unknown>, observations?: string): DiagnosticResult {
@@ -37,11 +48,12 @@ async function runSystemPhase(): Promise<AutoDiagnosticPhase> {
   const results: DiagnosticResult[] = []
   try {
     const info = await getSystemInfo()
-    results.push(result('sys-hostname', 'OS', 'Hostname', 'PASS', info.hostname))
-    results.push(result('sys-model', 'OS', 'Modelo', 'PASS', `${info.manufacturer} ${info.model}`))
+
+    results.push(result('sys-hostname', 'OS', 'Hostname', 'PASS', info.hostname || '—'))
+    results.push(result('sys-model', 'OS', 'Modelo', 'PASS', `${info.manufacturer || '—'} ${info.model || ''}`.trim() || 'No detectado'))
     results.push(result('sys-serial', 'OS', 'Serial', 'PASS', info.serial || '—'))
-    results.push(result('sys-os', 'OS', 'Sistema Operativo', 'PASS', `${info.os.distro} ${info.os.release} (${info.os.arch})`))
-    results.push(result('sys-kernel', 'OS', 'Kernel', 'PASS', info.os.kernel))
+    results.push(result('sys-os', 'OS', 'Sistema Operativo', 'PASS', `${info.os.distro || '—'} ${info.os.release || ''} (${info.os.arch || '—'})`))
+    results.push(result('sys-kernel', 'OS', 'Kernel', 'PASS', info.os.kernel || '—'))
     results.push(result('sys-activated', 'OS', 'Activación', info.os.activated ? 'PASS' : 'WARN', info.os.activated ? 'Activado' : 'No activado', info.os.activated ? undefined : 'Windows no está activado. Algunas funciones pueden estar limitadas.'))
 
     const ext = info.extraSystem
@@ -242,7 +254,7 @@ async function runGPUPhase(): Promise<AutoDiagnosticPhase> {
     if (gpu.fanSpeed != null) results.push(result('gpu-fan', 'SENSOR', 'Ventilador GPU', 'PASS', `${gpu.fanSpeed} RPM`))
     if (gpu.powerDraw != null) results.push(result('gpu-power', 'HARDWARE', 'Consumo GPU', 'PASS', `${gpu.powerDraw.toFixed(1)} W`))
 
-    const gpuDetails = await si.graphics()
+    const gpuDetails = await withTimeout(si.graphics(), DIAG_TIMEOUT, 'graphics').catch(() => ({ displays: [] }))
     if (gpuDetails.displays && gpuDetails.displays.length > 0) {
       const displays = gpuDetails.displays.map(d => `${d.model || d.main ? 'Principal' : ''} (${d.resolutionx}x${d.resolutiony} @ ${d.currentRefreshRate}Hz)`)
       results.push(result('gpu-displays', 'HARDWARE', 'Pantallas conectadas', 'PASS', displays.join(' | ')))
@@ -270,9 +282,9 @@ async function runGPUPhase(): Promise<AutoDiagnosticPhase> {
 async function runStoragePhase(): Promise<AutoDiagnosticPhase> {
   const results: DiagnosticResult[] = []
   try {
-    const disks = await si.diskLayout()
-    const fsSize = await si.fsSize()
-    const disksIO = await si.disksIO().catch(() => null)
+    const disks = await withTimeout(si.diskLayout(), DIAG_TIMEOUT, 'diskLayout').catch(() => [])
+    const fsSize = await withTimeout(si.fsSize(), DIAG_TIMEOUT, 'fsSize').catch(() => [])
+    const disksIO = await withTimeout(si.disksIO(), DIAG_TIMEOUT, 'disksIO').catch(() => null)
 
     for (let i = 0; i < disks.length; i++) {
       const disk = disks[i]
@@ -363,7 +375,10 @@ async function runStoragePhase(): Promise<AutoDiagnosticPhase> {
 async function runBatteryPhase(): Promise<AutoDiagnosticPhase> {
   const results: DiagnosticResult[] = []
   try {
-    const battery = await si.battery()
+    const battery = await withTimeout(si.battery(), DIAG_TIMEOUT, 'battery').catch(() => ({
+      hasBattery: false, isCharging: false, maxCapacity: null, designedCapacity: null,
+      cycleCount: null, voltage: null, currentCapacity: null, acConnected: false
+    }))
     if (!battery.hasBattery) {
       results.push(result('bat-none', 'BATTERY', 'Batería', 'SKIP', 'No detectada / Equipo de escritorio'))
       return { id: 'battery', label: 'Diagnóstico de Batería', description: 'Verificando estado de la batería', status: 'SKIP', results }
@@ -442,30 +457,36 @@ async function runBatteryPhase(): Promise<AutoDiagnosticPhase> {
 async function runSensorsPhase(): Promise<AutoDiagnosticPhase> {
   const results: DiagnosticResult[] = []
   try {
-    const temps = await si.cpuTemperature()
-    const graphics = await si.graphics()
-    const disks = await si.diskLayout()
+    const [temps, graphics, disks] = await Promise.allSettled([
+      withTimeout(si.cpuTemperature(), DIAG_TIMEOUT, 'cpuTemperature'),
+      withTimeout(si.graphics(), DIAG_TIMEOUT, 'graphics'),
+      withTimeout(si.diskLayout(), DIAG_TIMEOUT, 'diskLayout')
+    ])
 
-    if (temps.main !== null && temps.main !== -1) {
+    const cpuTemps = temps.status === 'fulfilled' ? temps.value : { main: null, cores: [], max: null, package: null }
+    const graphicsVal = graphics.status === 'fulfilled' ? graphics.value : { controllers: [] }
+    const diskVal = disks.status === 'fulfilled' ? disks.value : []
+
+    if (cpuTemps.main !== null && cpuTemps.main !== -1) {
       let tempStatus: TestStatus = 'PASS'
-      if (temps.main >= 90) tempStatus = 'FAIL'
-      else if (temps.main >= 75) tempStatus = 'WARN'
-      results.push(result('sensor-cpu-temp', 'SENSOR', 'Temperatura CPU (principal)', tempStatus, `${temps.main}°C`,
+      if (cpuTemps.main >= 90) tempStatus = 'FAIL'
+      else if (cpuTemps.main >= 75) tempStatus = 'WARN'
+      results.push(result('sensor-cpu-temp', 'SENSOR', 'Temperatura CPU (principal)', tempStatus, `${cpuTemps.main}°C`,
         tempStatus === 'FAIL' ? 'Temperatura de CPU críticamente alta. Riesgo de daño térmico inminente.' : tempStatus === 'WARN' ? 'Temperatura de CPU elevada. Verifique el sistema de refrigeración.' : undefined))
     }
-    if (temps.package !== null && temps.package !== undefined && temps.package !== -1) {
-      results.push(result('sensor-cpu-package', 'SENSOR', 'Temperatura CPU (package)', 'PASS', `${temps.package}°C`))
+    if (cpuTemps.package !== null && cpuTemps.package !== undefined && cpuTemps.package !== -1) {
+      results.push(result('sensor-cpu-package', 'SENSOR', 'Temperatura CPU (package)', 'PASS', `${cpuTemps.package}°C`))
     }
-    if (temps.max !== null && temps.max !== undefined) {
-      results.push(result('sensor-cpu-max', 'SENSOR', 'CPU máxima registrada', 'PASS', `${temps.max}°C`))
+    if (cpuTemps.max !== null && cpuTemps.max !== undefined) {
+      results.push(result('sensor-cpu-max', 'SENSOR', 'CPU máxima registrada', 'PASS', `${cpuTemps.max}°C`))
     }
-    if (temps.cores && temps.cores.length > 0) {
-      const coreStrs = temps.cores.map((c, i) => `Núcleo ${i}: ${c}°C`).join(' • ')
+    if (cpuTemps.cores && cpuTemps.cores.length > 0) {
+      const coreStrs = cpuTemps.cores.map((c, i) => `Núcleo ${i}: ${c}°C`).join(' • ')
       results.push(result('sensor-cpu-cores', 'SENSOR', 'Temperatura por núcleo', 'PASS', coreStrs))
     }
 
-    if (graphics.controllers && graphics.controllers.length > 0) {
-      const gpu = graphics.controllers[0]
+    if (graphicsVal.controllers && graphicsVal.controllers.length > 0) {
+      const gpu = graphicsVal.controllers[0]
       if (gpu.temperatureGpu !== null && gpu.temperatureGpu !== undefined) {
         let gpuTempStatus: TestStatus = 'PASS'
         if (gpu.temperatureGpu >= 90) gpuTempStatus = 'FAIL'
@@ -476,7 +497,7 @@ async function runSensorsPhase(): Promise<AutoDiagnosticPhase> {
       if (gpu.fanSpeed != null) results.push(result('sensor-gpu-fan', 'SENSOR', 'Ventilador GPU', 'PASS', `${gpu.fanSpeed} RPM`))
     }
 
-    for (const disk of disks) {
+    for (const disk of diskVal) {
       if (disk.temperature !== null && disk.temperature > 0) {
         results.push(result(`sensor-disk-temp-${disk.name || '?'}`, 'SENSOR', `Temperatura ${disk.name || '?'}`, 'PASS', `${disk.temperature}°C`))
       }
@@ -528,7 +549,7 @@ async function runSensorsPhase(): Promise<AutoDiagnosticPhase> {
 async function runNetworkPhase(): Promise<AutoDiagnosticPhase> {
   const results: DiagnosticResult[] = []
   try {
-    const nets = await si.networkInterfaces()
+    const nets = await withTimeout(si.networkInterfaces(), DIAG_TIMEOUT, 'networkInterfaces').catch(() => [])
 
     if (nets.length === 0) {
       results.push(result('net-none', 'NETWORK', 'Interfaces de red', 'SKIP', 'Sin interfaces detectadas'))
@@ -629,7 +650,7 @@ async function runNetworkPhase(): Promise<AutoDiagnosticPhase> {
 
     if (hasWirelessUp) {
       try {
-        const wifiNets = await si.wifiNetworks()
+        const wifiNets = await withTimeout(si.wifiNetworks(), DIAG_TIMEOUT, 'wifiNetworks').catch(() => [])
         if (wifiNets.length > 0) {
           const signalAvg = wifiNets.reduce((sum, n) => sum + (n.signal_level || 0), 0) / wifiNets.length
           let signalStatus: TestStatus = 'PASS'

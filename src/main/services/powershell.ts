@@ -4,7 +4,7 @@ import { setTimeout as sleep } from 'timers/promises'
 
 const execFileAsync = promisify(execFile)
 
-const DEFAULT_TIMEOUT = 15000
+const DEFAULT_TIMEOUT = 8000
 
 export async function runPowerShell(script: string, timeout = DEFAULT_TIMEOUT): Promise<string> {
   const { stdout } = await execFileAsync('powershell.exe', [

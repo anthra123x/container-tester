@@ -2,6 +2,8 @@ import si from 'systeminformation'
 import { runPowerShellWithRetry } from './powershell'
 import type { SystemInfo, CPUInfo, RAMInfo, GPUInfo, MotherboardInfo, RAMSlot } from '../../shared/types/hardware.types'
 
+const SI_TIMEOUT = 8000
+
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return Promise.race([
     promise,
@@ -11,12 +13,10 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
   ])
 }
 
-const SI_TIMEOUT = 15000
-
 export async function getOSActivation(): Promise<boolean> {
   const result = await runPowerShellWithRetry<string>(
     '$status = Get-CimInstance -ClassName SoftwareLicensingProduct | Where-Object { $_.PartialProductKey -ne $null }; if ($status) { Write-Output "Activated" } else { Write-Output "NotActivated" }',
-    (r) => r
+    (r) => r, 1, 5000
   )
   return result === 'Activated'
 }
@@ -24,7 +24,7 @@ export async function getOSActivation(): Promise<boolean> {
 async function getOSWindowsEdition(): Promise<string | null> {
   return runPowerShellWithRetry<string>(
     '$os = Get-CimInstance Win32_OperatingSystem; Write-Output "$($os.Caption) $($os.BuildNumber)"',
-    (r) => r
+    (r) => r, 1, 5000
   )
 }
 
@@ -32,7 +32,7 @@ async function isSecureBootEnabled(): Promise<boolean | null> {
   try {
     const result = await runPowerShellWithRetry<string>(
       'Confirm-SecureBootUEFI -ErrorAction SilentlyContinue; if ($?) { $r = $LASTEXITCODE; Write-Output $r } else { Write-Output "null" }',
-      (r) => r
+      (r) => r, 1, 5000
     )
     if (result === '0') return false
     if (result === '1') return true
@@ -47,7 +47,7 @@ async function getTPMInfo(): Promise<{ present: boolean; version: string | null;
      $enabled = try { if ($tpm.IsEnabled_InitialValue -and $tpm.IsEnabled_InitialValue[0] -eq 1) { $true } else { $false } } catch { $null }
      $ver = try { ($tpm.SpecVersion -split ',')[0] } catch { $null }
      return "{""present"": true, ""version"": ""$ver"", ""enabled"": $enabled }"`,
-    JSON.parse
+    JSON.parse, 1, 5000
   )
 }
 
@@ -55,20 +55,22 @@ async function getVirtualizationInfo(): Promise<{ supported: boolean | null; ena
   try {
     const cpu = await si.cpu()
     const hasVirt = cpu.virtualization || (cpu.flags?.some(f => ['vmx', 'svm'].includes(f.toLowerCase())) ?? false)
-    const [hvResult, enabledResult] = await Promise.all([
+    const [hvResult, enabledResult] = await Promise.allSettled([
       runPowerShellWithRetry<string>(
         'Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue | Select-Object -ExpandProperty HypervisorPresent',
-        (r) => r
+        (r) => r, 1, 5000
       ),
       runPowerShellWithRetry<string>(
         '(Get-CimInstance Win32_Processor -ErrorAction SilentlyContinue | Select-Object -First 1).VirtualizationFirmwareEnabled',
-        (r) => r
+        (r) => r, 1, 5000
       )
     ])
+    const hv = hvResult.status === 'fulfilled' ? hvResult.value : null
+    const en = enabledResult.status === 'fulfilled' ? enabledResult.value : null
     return {
       supported: hasVirt,
-      enabled: enabledResult === 'True' ? true : enabledResult === 'False' ? false : null,
-      hypervisorPresent: hvResult === 'True' ? true : hvResult === 'False' ? false : null
+      enabled: en === 'True' ? true : en === 'False' ? false : null,
+      hypervisorPresent: hv === 'True' ? true : hv === 'False' ? false : null
     }
   } catch {
     return { supported: null, enabled: null, hypervisorPresent: null }
@@ -87,12 +89,12 @@ async function getPowerPlan(): Promise<string | null> {
         'a1841308-3541-4fab-bc81-f71556f20b4a': 'Power Saver',
       }
       return planMap[match[1].toLowerCase()] ?? r
-    }
+    }, 1, 5000
   )
 }
 
 async function getUptime(): Promise<{ seconds: number; days: number; hours: number; minutes: number }> {
-  const time = await withTimeout(si.time(), SI_TIMEOUT, 'time')
+  const time = await si.time()
   const uptimeSec = time.uptime ?? 0
   return {
     seconds: uptimeSec,
@@ -103,9 +105,10 @@ async function getUptime(): Promise<{ seconds: number; days: number; hours: numb
 }
 
 export async function getSystemInfo(): Promise<SystemInfo> {
-  const [system, os, activated, edition, secureBoot, tpm, virt, powerPlan, uptime] = await Promise.all([
+  const [system, os, motherboard, activated, edition, secureBoot, tpm, virt, powerPlan, uptime] = await Promise.allSettled([
     withTimeout(si.system(), SI_TIMEOUT, 'system'),
     withTimeout(si.osInfo(), SI_TIMEOUT, 'osInfo'),
+    getMotherboardInfo(),
     getOSActivation(),
     getOSWindowsEdition(),
     isSecureBootEnabled(),
@@ -115,100 +118,111 @@ export async function getSystemInfo(): Promise<SystemInfo> {
     getUptime()
   ])
 
-  const motherboard = await getMotherboardInfo()
+  const systemVal = system.status === 'fulfilled' ? system.value : { manufacturer: '', model: '', serial: '', version: '' }
+  const osVal = os.status === 'fulfilled' ? os.value : { hostname: '', platform: '', distro: '', release: '', kernel: '', arch: '' }
+  const mbVal = motherboard.status === 'fulfilled' ? motherboard.value : { manufacturer: '', model: '', version: '', serial: '', biosVersion: '', biosDate: '' }
 
   return {
-    hostname: os.hostname,
-    model: system.model,
-    serial: system.serial,
-    manufacturer: system.manufacturer,
+    hostname: osVal.hostname || '',
+    model: systemVal.model || '',
+    serial: systemVal.serial || '',
+    manufacturer: systemVal.manufacturer || '',
     os: {
-      platform: os.platform,
-      distro: os.distro,
-      release: os.release,
-      kernel: os.kernel,
-      arch: os.arch,
-      hostname: os.hostname,
-      activated
+      platform: osVal.platform || '',
+      distro: osVal.distro || '',
+      release: osVal.release || '',
+      kernel: osVal.kernel || '',
+      arch: osVal.arch || '',
+      hostname: osVal.hostname || '',
+      activated: activated.status === 'fulfilled' ? activated.value : false
     },
-    motherboard,
+    motherboard: mbVal,
     extraSystem: {
-      edition,
-      secureBoot,
-      tpm,
-      virtualization: virt,
-      powerPlan,
-      uptime
+      edition: edition.status === 'fulfilled' ? edition.value : null,
+      secureBoot: secureBoot.status === 'fulfilled' ? secureBoot.value : null,
+      tpm: tpm.status === 'fulfilled' ? tpm.value : null,
+      virtualization: virt.status === 'fulfilled' ? virt.value : null,
+      powerPlan: powerPlan.status === 'fulfilled' ? powerPlan.value : null,
+      uptime: uptime.status === 'fulfilled' ? uptime.value : { seconds: 0, days: 0, hours: 0, minutes: 0 }
     }
   }
 }
 
 export async function getMotherboardInfo(): Promise<MotherboardInfo> {
-  const [system, bios] = await Promise.all([
-    withTimeout(si.system(), SI_TIMEOUT, 'system'),
-    withTimeout(si.bios(), SI_TIMEOUT, 'bios')
+  const [system, bios] = await Promise.allSettled([
+    si.system(),
+    si.bios()
   ])
 
+  const sys = system.status === 'fulfilled' ? system.value : { manufacturer: '', model: '', version: '', serial: '' }
+  const bio = bios.status === 'fulfilled' ? bios.value : { version: '', releaseDate: '' }
+
   return {
-    manufacturer: system.manufacturer,
-    model: system.model,
-    version: system.version,
-    serial: system.serial,
-    biosVersion: bios.version,
-    biosDate: bios.releaseDate
+    manufacturer: sys.manufacturer || '',
+    model: sys.model || '',
+    version: sys.version || '',
+    serial: sys.serial || '',
+    biosVersion: bio.version || '',
+    biosDate: bio.releaseDate || ''
   }
 }
 
 export async function getCPUInfo(): Promise<CPUInfo> {
-  const [cpu, currentLoad] = await Promise.all([
+  const [cpu, currentLoad] = await Promise.allSettled([
     withTimeout(si.cpu(), SI_TIMEOUT, 'cpu'),
     withTimeout(si.currentLoad(), SI_TIMEOUT, 'currentLoad')
   ])
 
+  const cpuVal = cpu.status === 'fulfilled' ? cpu.value : {} as any
+  const clVal = currentLoad.status === 'fulfilled' ? currentLoad.value : {} as any
+
   let temp: number | null = null
   let coreTemps: number[] = []
   try {
-    const temps = await withTimeout(si.cpuTemperature(), SI_TIMEOUT, 'cpuTemperature')
+    const temps = await si.cpuTemperature()
     temp = temps.main ?? null
     coreTemps = temps.cores ?? []
   } catch { }
 
-  const perCoreLoad = currentLoad.cpus?.map(c => Math.round(c.load * 100) / 100) ?? []
-  const cache = cpu.cache ?? null
+  const perCoreLoad = clVal.cpus?.map((c: any) => Math.round(c.load * 100) / 100) ?? []
+  const cache = cpuVal.cache ?? null
 
   return {
-    manufacturer: cpu.manufacturer,
-    brand: cpu.brand,
-    cores: cpu.cores,
-    physicalCores: cpu.physicalCores,
-    speed: cpu.speed,
-    speedMax: cpu.speedMax,
-    speedMin: cpu.speedMin,
-    usage: Math.round(currentLoad.currentLoad * 100) / 100,
+    manufacturer: cpuVal.manufacturer || '',
+    brand: cpuVal.brand || '',
+    cores: cpuVal.cores || 0,
+    physicalCores: cpuVal.physicalCores || 0,
+    speed: cpuVal.speed || 0,
+    speedMax: cpuVal.speedMax || 0,
+    speedMin: cpuVal.speedMin || 0,
+    usage: Math.round((clVal.currentLoad || 0) * 100) / 100,
     temperature: temp,
-    voltage: cpu.voltage != null ? parseFloat(String(cpu.voltage)) : null,
+    voltage: cpuVal.voltage != null ? parseFloat(String(cpuVal.voltage)) : null,
     coreTemps,
     perCoreLoad,
     cacheL1d: cache?.l1d ?? null,
     cacheL1i: cache?.l1i ?? null,
     cacheL2: cache?.l2 ?? null,
     cacheL3: cache?.l3 ?? null,
-    contextSwitches: currentLoad.ctxSwitches ?? null,
-    interrupts: currentLoad.interrupts ?? null,
-    processCount: currentLoad.processes ?? null,
+    contextSwitches: clVal.ctxSwitches ?? null,
+    interrupts: clVal.interrupts ?? null,
+    processCount: clVal.processes ?? null,
   }
 }
 
 export async function getRAMInfo(): Promise<RAMInfo> {
-  const [mem, memLayout] = await Promise.all([
+  const [mem, memLayout] = await Promise.allSettled([
     withTimeout(si.mem(), SI_TIMEOUT, 'mem'),
     withTimeout(si.memLayout(), SI_TIMEOUT, 'memLayout')
   ])
 
-  const slots: RAMSlot[] = memLayout.map((slot) => ({
+  const memVal = mem.status === 'fulfilled' ? mem.value : { total: 0, used: 0, free: 0, swaptotal: null, swapused: null }
+  const memLayoutVal = memLayout.status === 'fulfilled' ? memLayout.value : []
+
+  const slots: RAMSlot[] = memLayoutVal.map((slot: any) => ({
     bank: slot.bank ?? 'Unknown',
     type: slot.type ?? 'Unknown',
-    size: slot.size,
+    size: slot.size || 0,
     speed: slot.clockSpeed ?? 0,
     manufacturer: slot.manufacturer ?? 'Unknown',
     partNum: slot.partNum ?? '',
@@ -218,18 +232,18 @@ export async function getRAMInfo(): Promise<RAMInfo> {
   }))
 
   return {
-    total: mem.total,
-    used: mem.used,
-    free: mem.free,
-    usagePercent: Math.round((mem.used / mem.total) * 100 * 100) / 100,
+    total: memVal.total || 0,
+    used: memVal.used || 0,
+    free: memVal.free || 0,
+    usagePercent: memVal.total > 0 ? Math.round((memVal.used / memVal.total) * 100 * 100) / 100 : 0,
     slots,
-    swapTotal: mem.swaptotal ?? null,
-    swapUsed: mem.swapused ?? null,
+    swapTotal: memVal.swaptotal ?? null,
+    swapUsed: memVal.swapused ?? null,
   }
 }
 
 export async function getGPUInfo(): Promise<GPUInfo> {
-  const graphics = await withTimeout(si.graphics(), SI_TIMEOUT, 'graphics')
+  const graphics = await withTimeout(si.graphics(), SI_TIMEOUT, 'graphics').catch(() => ({ controllers: [] }))
 
   if (!graphics.controllers?.length) {
     return { model: 'No detectada', vendor: 'N/A', vram: 0, driverVersion: 'N/A', temperature: null, usage: 0 }
@@ -238,10 +252,10 @@ export async function getGPUInfo(): Promise<GPUInfo> {
   const primary = graphics.controllers[0]
 
   return {
-    model: primary.model,
-    vendor: primary.vendor,
+    model: primary.model || 'No detectada',
+    vendor: primary.vendor || 'N/A',
     vram: primary.vram ?? 0,
-    driverVersion: primary.driverVersion ?? 'N/A',
+    driverVersion: primary.driverVersion || 'N/A',
     temperature: primary.temperatureGpu ?? null,
     usage: primary.utilizationGpu ?? 0,
     coreClock: primary.clockCore ?? null,
