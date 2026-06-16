@@ -4,6 +4,8 @@ import { app } from 'electron'
 import * as path from 'path'
 import * as fs from 'fs/promises'
 
+const WORKER_TIMEOUT = 120000
+
 export interface BenchmarkPhaseResult {
   score: number
   rating: string
@@ -31,19 +33,15 @@ export async function runCPUBenchmark(progress?: (pct: number) => void): Promise
   const logCores = cpu.cores || physCores
 
   const workFactor = Math.max(physCores, 2)
-  const iterationsPerCore = 60000000
-
   const workersCount = Math.min(physCores, 16)
-  const iterationsPerWorker = Math.floor((iterationsPerCore * workFactor) / workersCount)
+  const iterationsPerWorker = Math.floor((60000000 * workFactor) / workersCount)
 
   const workerCode = `
     const { parentPort } = require('worker_threads');
     const iterations = ${iterationsPerWorker};
     const reportInterval = Math.max(1, Math.floor(iterations / 20));
-
     let inside = 0;
     let total = 0;
-
     for (let i = 0; i < iterations; i++) {
       const x = Math.random();
       const y = Math.random();
@@ -53,7 +51,6 @@ export async function runCPUBenchmark(progress?: (pct: number) => void): Promise
         parentPort.postMessage({ type: 'progress', pct: Math.round((i / iterations) * 100) });
       }
     }
-
     const pi = 4 * inside / total;
     parentPort.postMessage({ type: 'done', pi, inside, total });
   `
@@ -63,26 +60,43 @@ export async function runCPUBenchmark(progress?: (pct: number) => void): Promise
   let totalInside = 0
   let totalSamples = 0
 
+  const workers: Worker[] = []
   const workerPromises: Promise<void>[] = []
 
+  function terminateAll(): void {
+    for (const w of workers) {
+      try { w.terminate() } catch { }
+    }
+    workers.length = 0
+  }
+
   for (let w = 0; w < workersCount; w++) {
-    workerPromises.push(new Promise((resolve, reject) => {
+    workerPromises.push(new Promise<void>((resolve, reject) => {
       const worker = new Worker(workerCode, { eval: true })
-      worker.on('message', (msg) => {
-        if (msg.type === 'progress') {
-          const overallPct = Math.round(((completed * 100) + msg.pct) / workersCount)
-          progress?.(Math.min(overallPct, 99))
-        } else if (msg.type === 'done') {
+      workers.push(worker)
+
+      const timeout = setTimeout(() => {
+        try { worker.terminate() } catch { }
+        reject(new Error('Worker timeout'))
+      }, WORKER_TIMEOUT)
+
+      worker.on('message', (msg: any) => {
+        if (msg.type === 'done') {
+          clearTimeout(timeout)
           totalInside += msg.inside
           totalSamples += msg.total
           completed++
-          if (completed === workersCount) {
-            progress?.(100)
-          }
+          if (completed === workersCount) progress?.(100)
           resolve()
+        } else if (msg.type === 'progress') {
+          const overallPct = Math.round(((completed * 100) + msg.pct) / workersCount)
+          progress?.(Math.min(overallPct, 99))
         }
       })
-      worker.on('error', reject)
+      worker.on('error', (err) => {
+        clearTimeout(timeout)
+        reject(err)
+      })
     }))
   }
 
@@ -90,44 +104,41 @@ export async function runCPUBenchmark(progress?: (pct: number) => void): Promise
     await Promise.all(workerPromises)
   } catch {
     progress?.(100)
+  } finally {
+    terminateAll()
   }
 
   const elapsed = (performance.now() - start) / 1000
   const piEstimate = totalSamples > 0 ? 4 * totalInside / totalSamples : 0
   const piError = Math.abs(Math.PI - piEstimate) / Math.PI * 100
-
   const opsPerSec = totalSamples / Math.max(elapsed, 0.01)
-  const referenceOpsPerSec = 120000000
-  const rawScore = (opsPerSec / referenceOpsPerSec) * 5000
 
+  const rawScore = (opsPerSec / 120000000) * 5000
   const coreBoost = Math.min(physCores / 4, 2)
-  const speed = cpu.speed || 2.5
-  const speedBoost = Math.min(speed / 2.5, 1.5)
-
+  const speedBoost = Math.min((cpu.speed || 2.5) / 2.5, 1.5)
   const score = Math.round(Math.min(10000, Math.max(0, rawScore * coreBoost * speedBoost)))
-  const rating = rateScore(score)
 
-  const details = `Procesador: ${cpu.manufacturer} ${cpu.brand} (${physCores}C/${logCores}T @ ${speed} GHz) • ${workersCount} hilos • ${(totalSamples / 1e6).toFixed(0)}M muestras Monte Carlo`
-  const metrics: Record<string, string | number> = {
-    'Núcleos físicos': physCores,
-    'Hilos de trabajo': workersCount,
-    'Muestras': `${(totalSamples / 1e6).toFixed(0)}M`,
-    'Tiempo': `${elapsed.toFixed(1)}s`,
-    'Throughput': `${Math.round(opsPerSec / 1e6)}M ops/s`,
-    'π estimado': piEstimate.toFixed(6),
-    'Error π': `${piError.toFixed(4)}%`,
+  return {
+    score,
+    rating: rateScore(score),
+    details: `Procesador: ${cpu.manufacturer} ${cpu.brand} (${physCores}C/${logCores}T @ ${cpu.speed || 2.5} GHz) • ${workersCount} hilos • ${(totalSamples / 1e6).toFixed(0)}M muestras Monte Carlo`,
+    metrics: {
+      'Núcleos físicos': physCores,
+      'Hilos de trabajo': workersCount,
+      'Muestras': `${(totalSamples / 1e6).toFixed(0)}M`,
+      'Tiempo': `${elapsed.toFixed(1)}s`,
+      'Throughput': `${Math.round(opsPerSec / 1e6)}M ops/s`,
+      'π estimado': piEstimate.toFixed(6),
+      'Error π': `${piError.toFixed(4)}%`,
+    },
   }
-
-  return { score, rating, details, metrics }
 }
 
 export async function runMemoryBenchmark(progress?: (pct: number) => void): Promise<BenchmarkPhaseResult> {
   const mem = await si.mem()
   const totalGB = (mem.total || 4294967296) / 1073741824
-
   const allocMB = Math.min(Math.floor(totalGB * 0.3), 1024)
   const allocBytes = allocMB * 1024 * 1024
-
   const chunkSize = 64 * 1024
   const chunkCount = Math.floor(allocBytes / chunkSize)
 
@@ -141,11 +152,8 @@ export async function runMemoryBenchmark(progress?: (pct: number) => void): Prom
   progress?.(20)
 
   const start = performance.now()
-
   let accum = 0
-  const randIndexes: number[] = []
-
-  progress?.(25)
+  let randIndexes: number[] = []
 
   for (let pass = 0; pass < 3; pass++) {
     const reportBase = 25 + pass * 23
@@ -158,17 +166,15 @@ export async function runMemoryBenchmark(progress?: (pct: number) => void): Prom
         buf[offset + j] = (buf[offset + j] + pass) & 0xFF
       }
       accum += chunkSum
-
       if (ci % Math.max(1, Math.floor(chunkCount / 15)) === 0) {
         progress?.(Math.min(reportBase + Math.round((ci / chunkCount) * 20), reportBase + 19))
       }
     }
 
-    randIndexes.length = 0
+    randIndexes = []
     for (let r = 0; r < 500000; r++) {
       randIndexes.push(Math.floor(Math.random() * buf.length))
     }
-    progress?.(reportBase + 20)
 
     for (let ri = 0; ri < randIndexes.length; ri++) {
       const idx = randIndexes[ri]
@@ -178,32 +184,35 @@ export async function runMemoryBenchmark(progress?: (pct: number) => void): Prom
   }
 
   progress?.(95)
-
   const elapsed = (performance.now() - start) / 1000
 
-  const totalBytesProcessed = (allocBytes * 3)
-    + (allocBytes * 3)
-    + (500000 * 3)
-
+  const totalBytesProcessed = (allocBytes * 3) + (allocBytes * 3) + (500000 * 3)
   const processedGB = totalBytesProcessed / 1073741824
   const throughput = processedGB / Math.max(elapsed, 0.01)
 
-  const referenceThroughput = 25
-  const rawScore = (throughput / referenceThroughput) * 5000
+  const rawScore = (throughput / 25) * 5000
   const score = Math.round(Math.min(10000, Math.max(0, rawScore)))
-  const rating = rateScore(score)
 
-  const details = `Memoria: ${totalGB.toFixed(1)} GB (${allocMB} MB probados) • ${throughput.toFixed(1)} GB/s throughput • 3 pasadas secuenciales + 3 × 500K accesos aleatorios`
-  const metrics: Record<string, string | number> = {
-    'RAM total': `${totalGB.toFixed(1)} GB`,
-    'Buffer': `${allocMB} MB`,
-    'Throughput': `${throughput.toFixed(1)} GB/s`,
-    'Pasadas secuenciales': 3,
-    'Accesos aleatorios': '3 × 500K',
-    'Tiempo': `${elapsed.toFixed(1)}s`,
+  const result: BenchmarkPhaseResult = {
+    score,
+    rating: rateScore(score),
+    details: `Memoria: ${totalGB.toFixed(1)} GB (${allocMB} MB probados) • ${throughput.toFixed(1)} GB/s throughput • 3 pasadas secuenciales + 3 × 500K accesos aleatorios`,
+    metrics: {
+      'RAM total': `${totalGB.toFixed(1)} GB`,
+      'Buffer': `${allocMB} MB`,
+      'Throughput': `${throughput.toFixed(1)} GB/s`,
+      'Pasadas secuenciales': 3,
+      'Accesos aleatorios': '3 × 500K',
+      'Tiempo': `${elapsed.toFixed(1)}s`,
+    },
   }
 
-  return { score, rating, details, metrics }
+  buf.fill(0)
+  randIndexes.length = 0
+  randIndexes = []
+  ;(globalThis as any).gc?.()
+
+  return result
 }
 
 export async function runDiskBenchmark(progress?: (pct: number) => void): Promise<BenchmarkPhaseResult> {
@@ -212,90 +221,85 @@ export async function runDiskBenchmark(progress?: (pct: number) => void): Promis
   const sizeMB = 200
   const buf1MB = Buffer.alloc(1024 * 1024, 0xBB)
 
-  try {
-    progress?.(3)
+  let wFd: fs.FileHandle | null = null
+  let rFd: fs.FileHandle | null = null
+  let rFd2: fs.FileHandle | null = null
 
+  async function closeAll(): Promise<void> {
+    for (const fd of [wFd, rFd, rFd2]) {
+      if (fd) { try { await fd.close() } catch { } }
+    }
+    wFd = null; rFd = null; rFd2 = null
+  }
+
+  try {
+    wFd = await fs.open(testFile, 'w')
     const writeStart = performance.now()
-    const wFd = await fs.open(testFile, 'w')
     for (let i = 0; i < sizeMB; i++) {
       await wFd.write(buf1MB, 0, buf1MB.length)
-      if (i % 20 === 0) {
-        progress?.(3 + Math.round((i / sizeMB) * 22))
-      }
+      if (i % 20 === 0) progress?.(3 + Math.round((i / sizeMB) * 22))
     }
     await wFd.close()
+    wFd = null
     const writeTime = (performance.now() - writeStart) / 1000
-    progress?.(27)
-
     const writeMBps = writeTime > 0 ? Math.round(sizeMB / writeTime) : 0
 
-    const readStart = performance.now()
-    const rFd = await fs.open(testFile, 'r')
+    rFd = await fs.open(testFile, 'r')
     const readBuf = Buffer.alloc(1024 * 1024)
+    const readStart = performance.now()
     for (let i = 0; i < sizeMB; i++) {
       await rFd.read(readBuf, 0, readBuf.length, i * 1024 * 1024)
-      if (i % 20 === 0) {
-        progress?.(30 + Math.round((i / sizeMB) * 22))
-      }
+      if (i % 20 === 0) progress?.(30 + Math.round((i / sizeMB) * 22))
     }
     await rFd.close()
+    rFd = null
     const seqReadTime = (performance.now() - readStart) / 1000
-    progress?.(55)
-
     const readMBps = seqReadTime > 0 ? Math.round(sizeMB / seqReadTime) : 0
 
-    const iopsStart = performance.now()
-    const rFd2 = await fs.open(testFile, 'r')
+    rFd2 = await fs.open(testFile, 'r')
     const iopsBuf = Buffer.alloc(4096)
+    const iopsStart = performance.now()
     let iopsCompleted = 0
     const iopsTarget = 5000
     const maxIopsTime = 8
 
     for (let i = 0; i < iopsTarget; i++) {
       const pos = Math.floor(Math.random() * sizeMB * 1024 * 1024 / 4096) * 4096
-      try {
-        await rFd2.read(iopsBuf, 0, 4096, pos)
-        iopsCompleted++
-      } catch { }
+      try { await rFd2.read(iopsBuf, 0, 4096, pos); iopsCompleted++ } catch { }
       if (i % 200 === 0) {
-        const elapsedSec = (performance.now() - iopsStart) / 1000
-        if (elapsedSec >= maxIopsTime) break
-        progress?.(58 + Math.min(Math.round((elapsedSec / maxIopsTime) * 37), 37))
+        const es = (performance.now() - iopsStart) / 1000
+        if (es >= maxIopsTime) break
+        progress?.(58 + Math.min(Math.round((es / maxIopsTime) * 37), 37))
       }
     }
-    const iopsTime = (performance.now() - iopsStart) / 1000
     await rFd2.close()
-    progress?.(97)
-
+    rFd2 = null
+    const iopsTime = (performance.now() - iopsStart) / 1000
     const iops = Math.round(iopsCompleted / Math.max(iopsTime, 0.01))
 
-    const refWrite = 500
-    const refRead = 1500
-    const refIOPS = 15000
-
-    const writeScore = (writeMBps / refWrite) * 3000
-    const readScore = (readMBps / refRead) * 3500
-    const iopsScore = (iops / refIOPS) * 3500
-
+    const writeScore = (writeMBps / 500) * 3000
+    const readScore = (readMBps / 1500) * 3500
+    const iopsScore = (iops / 15000) * 3500
     const score = Math.round(Math.min(10000, Math.max(0, writeScore + readScore + iopsScore)))
-    const rating = rateScore(score)
 
     const diskInfo = await si.diskLayout().catch(() => [])
     const primaryDisk = diskInfo[0]
-    const diskName = primaryDisk ? `${primaryDisk.type || '?'} ${primaryDisk.name || ''}`.trim() : '?'
 
-    const details = `Disco: ${diskName} • Escritura sec: ${writeMBps} MB/s • Lectura sec: ${readMBps} MB/s • IOPS 4K: ${iops.toLocaleString()}`
-    const metrics: Record<string, string | number> = {
-      'Tipo': primaryDisk?.type || '?',
-      'Escritura sec.': `${writeMBps} MB/s`,
-      'Lectura sec.': `${readMBps} MB/s`,
-      'IOPS 4K aleat.': iops,
-      'Tamaño archivo': `${sizeMB} MB`,
-      'Tiempo total': `${(writeTime + seqReadTime + iopsTime).toFixed(1)}s`,
+    return {
+      score,
+      rating: rateScore(score),
+      details: `Disco: ${primaryDisk ? `${primaryDisk.type || '?'} ${primaryDisk.name || ''}`.trim() : '?'} • Escritura sec: ${writeMBps} MB/s • Lectura sec: ${readMBps} MB/s • IOPS 4K: ${iops.toLocaleString()}`,
+      metrics: {
+        'Tipo': primaryDisk?.type || '?',
+        'Escritura sec.': `${writeMBps} MB/s`,
+        'Lectura sec.': `${readMBps} MB/s`,
+        'IOPS 4K aleat.': iops,
+        'Tamaño archivo': `${sizeMB} MB`,
+        'Tiempo total': `${(writeTime + seqReadTime + iopsTime).toFixed(1)}s`,
+      },
     }
-
-    return { score, rating, details, metrics }
   } finally {
+    await closeAll()
     try { await fs.unlink(testFile) } catch { }
   }
 }
@@ -326,9 +330,14 @@ export async function runFullBenchmark(onProgress?: (phase: string, pct: number)
   if (disk.rating === 'Bajo' || disk.rating === 'Regular') parts.push('disco de almacenamiento lento')
   else if (disk.rating === 'Excelente') parts.push('disco de alta velocidad')
 
-  const summary = parts.length > 0
-    ? `Rendimiento ${overallRating.toLowerCase()}. ${parts.join('. ')}.`
-    : `Rendimiento ${overallRating.toLowerCase()}. Todos los componentes dentro de parámetros normales.`
-
-  return { cpu, memory, disk, overall: { score: overallScore, rating: overallRating, summary } }
+  return {
+    cpu, memory, disk,
+    overall: {
+      score: overallScore,
+      rating: overallRating,
+      summary: parts.length > 0
+        ? `Rendimiento ${overallRating.toLowerCase()}. ${parts.join('. ')}.`
+        : `Rendimiento ${overallRating.toLowerCase()}. Todos los componentes dentro de parámetros normales.`,
+    },
+  }
 }

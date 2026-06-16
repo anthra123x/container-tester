@@ -15,10 +15,15 @@ export function registerLiveDataIPC(): void {
     const { runFullBenchmark } = await import('../services/benchmark.service')
     const win = BrowserWindow.fromWebContents(event.sender)
 
-    const result = await runFullBenchmark((phase, pct) => {
-      win?.webContents.send('benchmark:progress', { phase, pct })
+    function windowAlive(): boolean {
+      return win !== null && !win.isDestroyed()
+    }
+
+    const result = await runFullBenchmark((_phase, _pct) => {
+      if (!windowAlive()) return
+      try { win!.webContents.send('benchmark:progress', { phase: _phase, pct: _pct }) } catch {}
     })
 
-    return result
+    return windowAlive() ? result : null
   })
 }

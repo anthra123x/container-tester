@@ -9,7 +9,7 @@ const DEFAULT_TIMEOUT = 8000
 export async function runPowerShell(script: string, timeout = DEFAULT_TIMEOUT): Promise<string> {
   const { stdout } = await execFileAsync('powershell.exe', [
     '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script
-  ], { timeout })
+  ], { timeout, maxBuffer: 5 * 1024 * 1024 })
   return stdout.trim()
 }
 

@@ -1,9 +1,11 @@
-export function useIpc() {
-  const api = (window as any).api
+import { useRef, useMemo } from 'react'
 
-  return {
-    invoke: api.invoke.bind(api),
-    on: api.on.bind(api),
-    send: api.send.bind(api),
-  }
+export function useIpc() {
+  const apiRef = useRef((window as any).api)
+
+  return useMemo(() => ({
+    invoke: apiRef.current.invoke.bind(apiRef.current),
+    on: apiRef.current.on.bind(apiRef.current),
+    send: apiRef.current.send.bind(apiRef.current),
+  }), [])
 }
