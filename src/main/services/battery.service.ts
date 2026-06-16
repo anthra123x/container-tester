@@ -37,7 +37,7 @@ interface PSBatteryData {
 }
 
 async function getBatteryFullChargedCapacity(): Promise<{ designed: number | null; fullCharged: number | null }> {
-  return runPowerShellWithRetry<{ designed: number | null; fullCharged: number | null }>(
+  const result = await runPowerShellWithRetry<{ designed: number | null; fullCharged: number | null }>(
     'Get-WmiObject -Namespace root\\wmi -Class BatteryFullChargedCapacity | Select-Object DesignedCapacity,FullChargedCapacity | ConvertTo-Json -Compress',
     (raw) => {
       const parsed = JSON.parse(raw)
@@ -46,7 +46,8 @@ async function getBatteryFullChargedCapacity(): Promise<{ designed: number | nul
         fullCharged: parsed.FullChargedCapacity ?? null
       }
     }
-  ) ?? { designed: null, fullCharged: null }
+  )
+  return result ?? { designed: null, fullCharged: null }
 }
 
 async function getBatteryStaticData(): Promise<PSBatteryData | null> {
@@ -62,12 +63,16 @@ async function getBatteryRuntime(): Promise<{ estimatedRuntime: number | null; c
     if (-not $bat) { return "null" }
     $chargeRate = try { [math]::Round($bat.ChargeRate / 1000, 2) } catch { $null }
     $dischargeRate = try { [math]::Round($bat.DischargeRate / 1000, 2) } catch { $null }
-    $remaining = try { [math]::Round($bat.RemainingCapacity / 1000, 2) } catch { $null }
-    return "{ ""EstimatedRuntime"": $($bat.EstimatedRuntime), ""ChargeRate"": $chargeRate, ""DischargeRate"": $dischargeRate }"
+    $e = $bat.EstimatedRuntime
+    $cr = if ($chargeRate -ne $null) { $chargeRate } else { "null" }
+    $dr = if ($dischargeRate -ne $null) { $dischargeRate } else { "null" }
+    $er = if ($e -ne $null) { $e } else { "null" }
+    return "{ ""EstimatedRuntime"": $er, ""ChargeRate"": $cr, ""DischargeRate"": $dr }"
   `
-  return runPowerShellWithRetry<{ estimatedRuntime: number | null; chargeRate: number | null; dischargeRate: number | null }>(
+  const result = await runPowerShellWithRetry<{ estimatedRuntime: number | null; chargeRate: number | null; dischargeRate: number | null }>(
     script, JSON.parse
-  ) ?? { estimatedRuntime: null, chargeRate: null, dischargeRate: null }
+  )
+  return result ?? { estimatedRuntime: null, chargeRate: null, dischargeRate: null }
 }
 
 export async function getBatteryInfo(): Promise<BatteryInfo> {
