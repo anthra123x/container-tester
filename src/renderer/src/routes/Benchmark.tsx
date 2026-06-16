@@ -121,7 +121,7 @@ export function Benchmark() {
 
   useEffect(() => {
     mountedRef.current = true
-    const cleanup = on('benchmark:progress', (_event: any, data: { phase: string; pct: number }) => {
+    const cleanup = on('benchmark:progress', (data: { phase: string; pct: number }) => {
       if (mountedRef.current) {
         setProgress(prev => ({ ...prev, [data.phase]: data.pct }))
       }
