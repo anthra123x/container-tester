@@ -8,8 +8,8 @@ import { getSensorInfo } from '../services/sensor.service'
 import { runPowerShellWithRetry } from '../services/powershell'
 import si from 'systeminformation'
 
-function result(id: string, category: DiagnosticResult['category'], testName: string, status: TestStatus, value: string, details?: Record<string, unknown>): DiagnosticResult {
-  return { id, category, testName, status, value, details }
+function result(id: string, category: DiagnosticResult['category'], testName: string, status: TestStatus, value: string, details?: Record<string, unknown>, observations?: string): DiagnosticResult {
+  return { id, category, testName, status, value, details, observations }
 }
 
 function phaseStatus(results: DiagnosticResult[]): TestStatus {
@@ -42,17 +42,25 @@ async function runSystemPhase(): Promise<AutoDiagnosticPhase> {
     results.push(result('sys-serial', 'OS', 'Serial', 'PASS', info.serial || '—'))
     results.push(result('sys-os', 'OS', 'Sistema Operativo', 'PASS', `${info.os.distro} ${info.os.release} (${info.os.arch})`))
     results.push(result('sys-kernel', 'OS', 'Kernel', 'PASS', info.os.kernel))
-    results.push(result('sys-activated', 'OS', 'Activación', info.os.activated ? 'PASS' : 'WARN', info.os.activated ? 'Activado' : 'No activado'))
+    results.push(result('sys-activated', 'OS', 'Activación', info.os.activated ? 'PASS' : 'WARN', info.os.activated ? 'Activado' : 'No activado', info.os.activated ? undefined : 'Windows no está activado. Algunas funciones pueden estar limitadas.'))
 
     const ext = info.extraSystem
     if (ext) {
       if (ext.edition) results.push(result('sys-edition', 'OS', 'Edición de Windows', 'PASS', ext.edition))
       if (ext.uptime) results.push(result('sys-uptime', 'OS', 'Tiempo encendido', 'PASS', `${ext.uptime.days}d ${ext.uptime.hours}h ${ext.uptime.minutes}m`))
       if (ext.powerPlan) results.push(result('sys-powerplan', 'OS', 'Plan de energía', 'PASS', ext.powerPlan))
-      if (ext.secureBoot !== null) results.push(result('sys-secureboot', 'OS', 'Secure Boot', ext.secureBoot ? 'PASS' : 'WARN', ext.secureBoot ? 'Activado' : 'Desactivado'))
-      if (ext.tpm) results.push(result('sys-tpm', 'OS', 'TPM', ext.tpm.present ? 'PASS' : 'WARN', ext.tpm.present ? `Presente (${ext.tpm.version || 'vN/A'})${ext.tpm.enabled ? ' • Activado' : ' • Desactivado'}` : 'No presente'))
-      if (ext.virtualization) results.push(result('sys-virt', 'OS', 'Virtualización', ext.virtualization.enabled ? 'PASS' : ext.virtualization.supported ? 'WARN' : 'FAIL',
-        `${ext.virtualization.supported ? 'Soportada' : 'No soportada'}${ext.virtualization.enabled ? ' • Activada' : ''}${ext.virtualization.hypervisorPresent ? ' • Hyper-V activo' : ''}`))
+      if (ext.secureBoot !== null) results.push(result('sys-secureboot', 'OS', 'Secure Boot', ext.secureBoot ? 'PASS' : 'WARN', ext.secureBoot ? 'Activado' : 'Desactivado', ext.secureBoot ? undefined : 'Secure Boot está desactivado. El sistema es más vulnerable a ataques de bootkit.'))
+      if (ext.tpm) results.push(result('sys-tpm', 'OS', 'TPM', ext.tpm.present ? 'PASS' : 'WARN', ext.tpm.present ? `Presente (${ext.tpm.version || 'vN/A'})${ext.tpm.enabled ? ' • Activado' : ' • Desactivado'}` : 'No presente', ext.tpm.present ? (ext.tpm.enabled ? undefined : 'TPM está desactivado en BIOS/UEFI. BitLocker y Windows Hello requieren TPM activado.') : 'TPM no detectado. El equipo no cumple requisitos de seguridad modernos.'))
+      if (ext.virtualization) {
+        const virtStatus: TestStatus = ext.virtualization.enabled ? 'PASS' : ext.virtualization.supported ? 'WARN' : 'FAIL'
+        const virtObs = ext.virtualization.enabled ? undefined
+          : ext.virtualization.supported
+            ? 'Virtualización soportada pero desactivada en BIOS/UEFI. Actívela para mejorar rendimiento en máquinas virtuales y WSL.'
+            : 'La virtualización no está soportada por este procesador. No es posible ejecutar máquinas virtuales de 64 bits.'
+        results.push(result('sys-virt', 'OS', 'Virtualización', virtStatus,
+          `${ext.virtualization.supported ? 'Soportada' : 'No soportada'}${ext.virtualization.enabled ? ' • Activada' : ''}${ext.virtualization.hypervisorPresent ? ' • Hyper-V activo' : ''}`,
+          virtObs))
+      }
     }
   } catch (err: any) {
     results.push(result('sys-error', 'OS', 'Error del sistema', 'FAIL', err?.message || 'Error'))
@@ -75,26 +83,30 @@ async function runCPUPhase(): Promise<AutoDiagnosticPhase> {
 
     const throttling = cpu.speedMax > 0 && cpu.speed < cpu.speedMax * 0.5
     results.push(result('cpu-throttling', 'HARDWARE', 'Throttling detectado', throttling ? 'WARN' : 'PASS',
-      throttling ? `Sí (${cpu.speed} GHz vs ${cpu.speedMax} GHz máx)` : 'No detectado'))
+      throttling ? `Sí (${cpu.speed} GHz vs ${cpu.speedMax} GHz máx)` : 'No detectado',
+      throttling ? 'El CPU está funcionando a la mitad de su velocidad máxima. Posible sobrecalentamiento o limitación de energía. Verifique la ventilación.' : undefined))
 
     let usageStatus: TestStatus = 'PASS'
     if (cpu.usage >= 90) usageStatus = 'FAIL'
     else if (cpu.usage >= 70) usageStatus = 'WARN'
-    results.push(result('cpu-usage', 'HARDWARE', 'Uso actual', usageStatus, `${cpu.usage}%`))
+    results.push(result('cpu-usage', 'HARDWARE', 'Uso actual', usageStatus, `${cpu.usage}%`,
+      usageStatus === 'FAIL' ? 'Uso de CPU críticamente alto. Revise procesos en segundo plano o posibles malware.' : usageStatus === 'WARN' ? 'Uso de CPU elevado. Cierre aplicaciones innecesarias.' : undefined))
 
     if (cpu.perCoreLoad && cpu.perCoreLoad.length > 0) {
       const maxCore = Math.max(...cpu.perCoreLoad)
       const minCore = Math.min(...cpu.perCoreLoad)
       const coreImbalance = maxCore - minCore > 50
       results.push(result('cpu-core-imbalance', 'HARDWARE', 'Balance entre núcleos', coreImbalance ? 'WARN' : 'PASS',
-        `Carga máxima: ${maxCore.toFixed(1)}% / mínima: ${minCore.toFixed(1)}%`))
+        `Carga máxima: ${maxCore.toFixed(1)}% / mínima: ${minCore.toFixed(1)}%`,
+        coreImbalance ? 'Distribución de carga desigual entre núcleos. Un proceso puede estar saturando un núcleo específico.' : undefined))
     }
 
     if (cpu.temperature !== null) {
       let tempStatus: TestStatus = 'PASS'
       if (cpu.temperature >= 90) tempStatus = 'FAIL'
       else if (cpu.temperature >= 75) tempStatus = 'WARN'
-      results.push(result('cpu-temp', 'SENSOR', 'Temperatura CPU', tempStatus, `${cpu.temperature}°C`))
+      results.push(result('cpu-temp', 'SENSOR', 'Temperatura CPU', tempStatus, `${cpu.temperature}°C`,
+        tempStatus === 'FAIL' ? 'Temperatura de CPU críticamente alta. Riesgo de daño térmico. Apague y verifique la pasta térmica/ventilador.' : tempStatus === 'WARN' ? 'Temperatura de CPU elevada. Verifique la ventilación del equipo.' : undefined))
     }
     if (cpu.coreTemps && cpu.coreTemps.length > 0) {
       const maxCoreTemp = Math.max(...cpu.coreTemps)
@@ -106,7 +118,8 @@ async function runCPUPhase(): Promise<AutoDiagnosticPhase> {
     if (cpu.voltage != null) {
       let voltStatus: TestStatus = 'PASS'
       if (cpu.voltage > 1.5) voltStatus = 'WARN'
-      results.push(result('cpu-voltage', 'HARDWARE', 'Voltaje CPU', voltStatus, `${cpu.voltage.toFixed(3)} V`))
+      results.push(result('cpu-voltage', 'HARDWARE', 'Voltaje CPU', voltStatus, `${cpu.voltage.toFixed(3)} V`,
+        voltStatus === 'WARN' ? 'Voltaje de CPU elevado. Puede indicar overclocking o problema de alimentación.' : undefined))
     }
 
     if (cpu.cacheL1d != null || cpu.cacheL2 != null || cpu.cacheL3 != null) {
@@ -137,12 +150,14 @@ async function runRAMPhase(): Promise<AutoDiagnosticPhase> {
     let usageStatus: TestStatus = 'PASS'
     if (ram.usagePercent >= 90) usageStatus = 'FAIL'
     else if (ram.usagePercent >= 70) usageStatus = 'WARN'
-    results.push(result('ram-usage', 'HARDWARE', 'Uso de memoria', usageStatus, `${ram.usagePercent}% (${usedGB.toFixed(2)} GB usados)`))
+    results.push(result('ram-usage', 'HARDWARE', 'Uso de memoria', usageStatus, `${ram.usagePercent}% (${usedGB.toFixed(2)} GB usados)`,
+      usageStatus === 'FAIL' ? 'Uso de memoria críticamente alto. El sistema puede volverse lento o inestable. Cierre aplicaciones o amplíe la RAM.' : usageStatus === 'WARN' ? 'Uso de memoria elevado. Cierre aplicaciones innecesarias para liberar recursos.' : undefined))
 
     let freeStatus: TestStatus = 'PASS'
     if (freeGB < 1) freeStatus = 'FAIL'
     else if (freeGB < 2.5) freeStatus = 'WARN'
-    results.push(result('ram-free', 'HARDWARE', 'Memoria libre', freeStatus, `${freeGB.toFixed(2)} GB`))
+    results.push(result('ram-free', 'HARDWARE', 'Memoria libre', freeStatus, `${freeGB.toFixed(2)} GB`,
+      freeStatus === 'FAIL' ? 'Memoria libre insuficiente. Riesgo de errores y rendimiento degradado. Considere ampliar la RAM.' : freeStatus === 'WARN' ? 'Poca memoria libre. Cierre aplicaciones para liberar memoria.' : undefined))
 
     const populated = ram.slots.filter(s => s.size > 0)
     results.push(result('ram-slots', 'HARDWARE', 'Módulos', 'PASS', `${populated.length} de ${ram.slots.length} slots ocupados`))
@@ -162,7 +177,8 @@ async function runRAMPhase(): Promise<AutoDiagnosticPhase> {
     const uniqueSpeeds = new Set(speeds.map(s => s.speed))
     if (speeds.length > 1 && uniqueSpeeds.size > 1) {
       results.push(result('ram-speed-mismatch', 'HARDWARE', 'Velocidades mixtas', 'WARN',
-        [...uniqueSpeeds].map(s => `${s} MHz`).join(', ')))
+        [...uniqueSpeeds].map(s => `${s} MHz`).join(', '),
+        'Los módulos funcionan a diferentes velocidades. La memoria funcionará a la velocidad del módulo más lento. Rendimiento subóptimo.'))
     }
 
     for (const slot of populated) {
@@ -180,7 +196,8 @@ async function runRAMPhase(): Promise<AutoDiagnosticPhase> {
       let swapStatus: TestStatus = 'PASS'
       if (swapUsedGB > swapGB * 0.8) swapStatus = 'WARN'
       results.push(result('ram-swap', 'HARDWARE', 'Archivo de paginación', swapStatus,
-        `${swapUsedGB.toFixed(1)} GB / ${swapGB.toFixed(1)} GB usados`))
+        `${swapUsedGB.toFixed(1)} GB / ${swapGB.toFixed(1)} GB usados`,
+        swapStatus === 'WARN' ? 'Uso elevado del archivo de paginación. La memoria RAM podría ser insuficiente para las aplicaciones en ejecución.' : undefined))
     }
   } catch (err: any) {
     results.push(result('ram-error', 'HARDWARE', 'Error RAM', 'FAIL', err?.message || 'Error'))
@@ -209,14 +226,16 @@ async function runGPUPhase(): Promise<AutoDiagnosticPhase> {
       let usageStatus: TestStatus = 'PASS'
       if (gpu.usage > 95) usageStatus = 'FAIL'
       else if (gpu.usage > 80) usageStatus = 'WARN'
-      results.push(result('gpu-usage', 'HARDWARE', 'Uso GPU', usageStatus, `${gpu.usage}%`))
+      results.push(result('gpu-usage', 'HARDWARE', 'Uso GPU', usageStatus, `${gpu.usage}%`,
+        usageStatus === 'FAIL' ? 'Uso de GPU críticamente alto. Puede indicar un proceso demandante (minería, renderizado) o un problema.' : usageStatus === 'WARN' ? 'Uso de GPU elevado.' : undefined))
     }
 
     if (gpu.temperature !== null) {
       let tempStatus: TestStatus = 'PASS'
       if (gpu.temperature >= 90) tempStatus = 'FAIL'
       else if (gpu.temperature >= 75) tempStatus = 'WARN'
-      results.push(result('gpu-temp', 'SENSOR', 'Temperatura GPU', tempStatus, `${gpu.temperature}°C`))
+      results.push(result('gpu-temp', 'SENSOR', 'Temperatura GPU', tempStatus, `${gpu.temperature}°C`,
+        tempStatus === 'FAIL' ? 'Temperatura de GPU críticamente alta. Riesgo de throttling o daño térmico. Verifique ventilación y pasta térmica.' : tempStatus === 'WARN' ? 'Temperatura de GPU elevada. Verifique la ventilación del equipo.' : undefined))
     }
 
     if (gpu.fanSpeed != null) results.push(result('gpu-fan', 'SENSOR', 'Ventilador GPU', 'PASS', `${gpu.fanSpeed} RPM`))
@@ -268,20 +287,23 @@ async function runStoragePhase(): Promise<AutoDiagnosticPhase> {
         if (fs.use >= 95) usageStatus = 'FAIL'
         else if (fs.use >= 80) usageStatus = 'WARN'
         results.push(result(`disk-usage-${i}`, 'STORAGE', `Uso (${disk.device || deviceId})`, usageStatus,
-          `${fs.use.toFixed(1)}% (${(fs.used / 1073741824).toFixed(1)} GB / ${(fs.size / 1073741824).toFixed(1)} GB)`))
+          `${fs.use.toFixed(1)}% (${(fs.used / 1073741824).toFixed(1)} GB / ${(fs.size / 1073741824).toFixed(1)} GB)`,
+          usageStatus === 'FAIL' ? 'Disco casi lleno. Riesgo de errores y rendimiento degradado. Libere espacio urgente.' : usageStatus === 'WARN' ? 'Disco con espacio limitado. Considere liberar espacio o ampliar el almacenamiento.' : undefined))
       }
 
       if (disk.smartStatus && disk.smartStatus === 'Ok' || disk.smartStatus === 'good') {
         results.push(result(`disk-smart-${i}`, 'STORAGE', `SMART (${deviceId})`, 'PASS', 'Saludable'))
       } else if (disk.smartStatus && disk.smartStatus !== 'N/A') {
-        results.push(result(`disk-smart-${i}`, 'STORAGE', `SMART (${deviceId})`, 'WARN', disk.smartStatus))
+        results.push(result(`disk-smart-${i}`, 'STORAGE', `SMART (${deviceId})`, 'WARN', disk.smartStatus,
+          'SMART reporta anomalías. Riesgo potencial de fallo del disco. Respalde sus datos inmediatamente.'))
       }
 
       if (disk.temperature !== null && disk.temperature > 0) {
         let tempStatus: TestStatus = 'PASS'
         if (disk.temperature >= 60) tempStatus = 'FAIL'
         else if (disk.temperature >= 50) tempStatus = 'WARN'
-        results.push(result(`disk-temp-${i}`, 'SENSOR', `Temperatura (${deviceId})`, tempStatus, `${disk.temperature}°C`))
+        results.push(result(`disk-temp-${i}`, 'SENSOR', `Temperatura (${deviceId})`, tempStatus, `${disk.temperature}°C`,
+          tempStatus === 'FAIL' ? 'Temperatura de disco críticamente alta. Riesgo de fallo inminente. Verifique ventilación.' : tempStatus === 'WARN' ? 'Temperatura de disco elevada. Verifique la refrigeración del equipo.' : undefined))
       }
 
       const smartDetail = await runPowerShellWithRetry<string>(
@@ -297,7 +319,8 @@ async function runStoragePhase(): Promise<AutoDiagnosticPhase> {
             if (wear >= 90) wearStatus = 'FAIL'
             else if (wear >= 70) wearStatus = 'WARN'
             results.push(result(`disk-wear-${i}`, 'STORAGE', `Desgaste SSD (${deviceId})`, wearStatus,
-              `${wear}%`))
+              `${wear}%`,
+              wearStatus === 'FAIL' ? 'SSD al final de su vida útil. Reemplácelo lo antes posible para evitar pérdida de datos.' : wearStatus === 'WARN' ? 'Desgaste de SSD significativo. Considere reemplazarlo en los próximos meses.' : undefined))
           }
           if (smart.PowerOnHours !== null && smart.PowerOnHours !== undefined) {
             const poh = parseInt(smart.PowerOnHours)
@@ -306,7 +329,8 @@ async function runStoragePhase(): Promise<AutoDiagnosticPhase> {
               if (poh > 50000) pohStatus = 'FAIL'
               else if (poh > 30000) pohStatus = 'WARN'
               results.push(result(`disk-hours-${i}`, 'STORAGE', `Horas encendido (${deviceId})`, pohStatus,
-                `${poh.toLocaleString()} horas (${Math.round(poh / 24)} días)`))
+                `${poh.toLocaleString()} horas (${Math.round(poh / 24)} días)`,
+                pohStatus === 'FAIL' ? 'Disco con más de 50000 horas de uso. Riesgo elevado de fallo. Considere reemplazarlo.' : pohStatus === 'WARN' ? 'Disco con uso prolongado. Monitoree su estado regularmente.' : undefined))
             }
           }
         } catch { }
@@ -350,7 +374,8 @@ async function runBatteryPhase(): Promise<AutoDiagnosticPhase> {
 
     results.push(result('bat-present', 'BATTERY', 'Batería presente', 'PASS', 'Sí'))
     results.push(result('bat-status', 'BATTERY', 'Estado', battery.isCharging ? 'PASS' : 'WARN',
-      battery.isCharging ? 'Cargando' : 'Descargando / No cargando'))
+      battery.isCharging ? 'Cargando' : 'Descargando / No cargando',
+      battery.isCharging ? undefined : 'La batería no está cargando. Verifique el adaptador de corriente y la conexión.'))
     results.push(result('bat-design', 'BATTERY', 'Capacidad de diseño', 'PASS',
       battery.designedCapacity ? `${battery.designedCapacity} mAh` : '—'))
     results.push(result('bat-max', 'BATTERY', 'Capacidad máxima actual', 'PASS',
@@ -359,24 +384,28 @@ async function runBatteryPhase(): Promise<AutoDiagnosticPhase> {
     let wearStatus: TestStatus = 'PASS'
     if (wear >= 40) wearStatus = 'FAIL'
     else if (wear >= 20) wearStatus = 'WARN'
-    results.push(result('bat-wear', 'BATTERY', 'Desgaste', wearStatus, `${wear}%`))
+    results.push(result('bat-wear', 'BATTERY', 'Desgaste', wearStatus, `${wear}%`,
+      wearStatus === 'FAIL' ? 'Desgaste de batería avanzado (≥40%). Reemplácela lo antes posible.' : wearStatus === 'WARN' ? 'Desgaste de batería moderado (≥20%). Monitoree su capacidad regularmente.' : undefined))
 
     let healthStatus: TestStatus = 'PASS'
     if (health < 60) healthStatus = 'FAIL'
     else if (health < 80) healthStatus = 'WARN'
-    results.push(result('bat-health', 'BATTERY', 'Salud', healthStatus, `${health}%`))
+    results.push(result('bat-health', 'BATTERY', 'Salud', healthStatus, `${health}%`,
+      healthStatus === 'FAIL' ? 'Salud de batería crítica (<60%). Reemplácela urgentemente.' : healthStatus === 'WARN' ? 'Salud de batería disminuida (<80%). Considere reemplazarla pronto.' : undefined))
 
     if (battery.cycleCount) {
       let cycleStatus: TestStatus = 'PASS'
       if (battery.cycleCount >= 1000) cycleStatus = 'FAIL'
       else if (battery.cycleCount >= 500) cycleStatus = 'WARN'
-      results.push(result('bat-cycles', 'BATTERY', 'Ciclos de carga', cycleStatus, `${battery.cycleCount}`))
+      results.push(result('bat-cycles', 'BATTERY', 'Ciclos de carga', cycleStatus, `${battery.cycleCount}`,
+        cycleStatus === 'FAIL' ? 'Ciclos de carga muy elevados (≥1000). Batería al final de su vida útil.' : cycleStatus === 'WARN' ? 'Ciclos de carga elevados (≥500). Considere reemplazo próximo.' : undefined))
     }
 
     if (battery.currentCapacity && battery.maxCapacity && battery.maxCapacity > 0) {
       const currentPercent = Math.round(battery.currentCapacity / battery.maxCapacity * 100)
       results.push(result('bat-charge-level', 'BATTERY', 'Nivel de carga actual', currentPercent > 20 ? 'PASS' : 'WARN',
-        `${currentPercent}% (${battery.currentCapacity} mAh / ${battery.maxCapacity} mAh)`))
+        `${currentPercent}% (${battery.currentCapacity} mAh / ${battery.maxCapacity} mAh)`,
+        currentPercent <= 20 ? 'Nivel de batería bajo. Conecte el cargador para evitar apagado inesperado.' : undefined))
     }
 
     const extBattery = await getBatteryInfo()
@@ -388,7 +417,8 @@ async function runBatteryPhase(): Promise<AutoDiagnosticPhase> {
       let tempStatus: TestStatus = 'PASS'
       if (extBattery.temperature >= 50) tempStatus = 'FAIL'
       else if (extBattery.temperature >= 40) tempStatus = 'WARN'
-      results.push(result('bat-temp', 'SENSOR', 'Temperatura batería', tempStatus, `${extBattery.temperature}°C`))
+      results.push(result('bat-temp', 'SENSOR', 'Temperatura batería', tempStatus, `${extBattery.temperature}°C`,
+        tempStatus === 'FAIL' ? 'Temperatura de batería críticamente alta (≥50°C). Riesgo de seguridad. Apague el equipo.' : tempStatus === 'WARN' ? 'Temperatura de batería elevada. Evite exponer el equipo al sol o superficies calientes.' : undefined))
     }
 
     if (extBattery.voltage) results.push(result('bat-voltage', 'BATTERY', 'Voltaje', 'PASS', `${extBattery.voltage} V`))
@@ -397,7 +427,8 @@ async function runBatteryPhase(): Promise<AutoDiagnosticPhase> {
     if (extBattery.estimatedRuntime) {
       const mins = Math.round(extBattery.estimatedRuntime / 60)
       results.push(result('bat-runtime', 'BATTERY', 'Tiempo restante estimado', mins > 30 ? 'PASS' : mins > 10 ? 'WARN' : 'FAIL',
-        `${mins} minutos`))
+        `${mins} minutos`,
+        mins <= 10 ? 'Tiempo restante críticamente bajo. Conecte el cargador inmediatamente.' : mins <= 30 ? 'Poco tiempo de batería restante.' : undefined))
     }
   } catch (err: any) {
     results.push(result('bat-error', 'BATTERY', 'Error batería', 'FAIL', err?.message || 'Error'))
@@ -418,7 +449,8 @@ async function runSensorsPhase(): Promise<AutoDiagnosticPhase> {
       let tempStatus: TestStatus = 'PASS'
       if (temps.main >= 90) tempStatus = 'FAIL'
       else if (temps.main >= 75) tempStatus = 'WARN'
-      results.push(result('sensor-cpu-temp', 'SENSOR', 'Temperatura CPU (principal)', tempStatus, `${temps.main}°C`))
+      results.push(result('sensor-cpu-temp', 'SENSOR', 'Temperatura CPU (principal)', tempStatus, `${temps.main}°C`,
+        tempStatus === 'FAIL' ? 'Temperatura de CPU críticamente alta. Riesgo de daño térmico inminente.' : tempStatus === 'WARN' ? 'Temperatura de CPU elevada. Verifique el sistema de refrigeración.' : undefined))
     }
     if (temps.package !== null && temps.package !== undefined && temps.package !== -1) {
       results.push(result('sensor-cpu-package', 'SENSOR', 'Temperatura CPU (package)', 'PASS', `${temps.package}°C`))
@@ -437,7 +469,8 @@ async function runSensorsPhase(): Promise<AutoDiagnosticPhase> {
         let gpuTempStatus: TestStatus = 'PASS'
         if (gpu.temperatureGpu >= 90) gpuTempStatus = 'FAIL'
         else if (gpu.temperatureGpu >= 75) gpuTempStatus = 'WARN'
-        results.push(result('sensor-gpu-temp', 'SENSOR', 'Temperatura GPU', gpuTempStatus, `${gpu.temperatureGpu}°C`))
+        results.push(result('sensor-gpu-temp', 'SENSOR', 'Temperatura GPU', gpuTempStatus, `${gpu.temperatureGpu}°C`,
+          gpuTempStatus === 'FAIL' ? 'Temperatura de GPU críticamente alta en sensores. Riesgo de throttling.' : gpuTempStatus === 'WARN' ? 'Temperatura de GPU elevada en sensores.' : undefined))
       }
       if (gpu.fanSpeed != null) results.push(result('sensor-gpu-fan', 'SENSOR', 'Ventilador GPU', 'PASS', `${gpu.fanSpeed} RPM`))
     }
@@ -527,7 +560,8 @@ async function runNetworkPhase(): Promise<AutoDiagnosticPhase> {
     if (pingResult) {
       const pingOk = pingResult.includes('OK') || pingResult.includes('True')
       results.push(result('net-ping', 'NETWORK', 'Ping a Internet (8.8.8.8)', pingOk ? 'PASS' : 'FAIL',
-        pingOk ? 'Respuesta OK' : 'Sin respuesta'))
+          pingOk ? 'Respuesta OK' : 'Sin respuesta',
+          pingOk ? undefined : 'Sin conectividad a Internet. Verifique su conexión de red, cable o WiFi.'))
 
       if (pingOk) {
         const pingLatency = await runPowerShellWithRetry<string>(
@@ -539,7 +573,8 @@ async function runNetworkPhase(): Promise<AutoDiagnosticPhase> {
           let latencyStatus: TestStatus = 'PASS'
           if (latency >= 200) latencyStatus = 'FAIL'
           else if (latency >= 100) latencyStatus = 'WARN'
-          results.push(result('net-latency', 'NETWORK', 'Latencia promedio', latencyStatus, `${latency} ms`))
+          results.push(result('net-latency', 'NETWORK', 'Latencia promedio', latencyStatus, `${latency} ms`,
+            latencyStatus === 'FAIL' ? 'Latencia de red muy alta (≥200ms). Puede afectar videollamadas y juegos en línea.' : latencyStatus === 'WARN' ? 'Latencia de red elevada (≥100ms).' : undefined))
         }
       }
     }
@@ -551,7 +586,8 @@ async function runNetworkPhase(): Promise<AutoDiagnosticPhase> {
     if (dnsResult) {
       const dnsOk = dnsResult.includes('OK') || dnsResult.includes('True')
       results.push(result('net-dns', 'NETWORK', 'Resolución DNS', dnsOk ? 'PASS' : 'FAIL',
-        dnsOk ? 'Funciona (google.com)' : 'Fallo en resolución'))
+          dnsOk ? 'Funciona (google.com)' : 'Fallo en resolución',
+          dnsOk ? undefined : 'La resolución DNS está fallando. Verifique la configuración de red o servidores DNS.'))
     }
 
     const gwResult = await runPowerShellWithRetry<string>(
@@ -597,7 +633,8 @@ async function runNetworkPhase(): Promise<AutoDiagnosticPhase> {
           let signalStatus: TestStatus = 'PASS'
           if (signalAvg < -80) signalStatus = 'FAIL'
           else if (signalAvg < -70) signalStatus = 'WARN'
-          results.push(result('net-wifi-signal', 'NETWORK', 'Señal WiFi promedio', signalStatus, `${signalAvg.toFixed(0)} dBm (${wifiNets.length} redes)`))
+          results.push(result('net-wifi-signal', 'NETWORK', 'Señal WiFi promedio', signalStatus, `${signalAvg.toFixed(0)} dBm (${wifiNets.length} redes)`,
+            signalStatus === 'FAIL' ? 'Señal WiFi muy débil (< -80 dBm). Considere acercarse al router o usar un repetidor.' : signalStatus === 'WARN' ? 'Señal WiFi débil. Puede experimentar conexiones lentas o intermitentes.' : undefined))
 
           const connWifi = await runPowerShellWithRetry<string>(
             'netsh wlan show interfaces | Select-String "SSID\\s*:" | ForEach-Object { $_ -replace ".*:\\s*", "" }',
@@ -611,7 +648,8 @@ async function runNetworkPhase(): Promise<AutoDiagnosticPhase> {
     }
 
     if (!hasUpInterface && results.length > 1) {
-      results.push(result('net-no-connectivity', 'NETWORK', 'Conectividad general', 'FAIL', 'Sin conexión activa'))
+      results.push(result('net-no-connectivity', 'NETWORK', 'Conectividad general', 'FAIL', 'Sin conexión activa',
+        'Ninguna interfaz de red tiene conexión activa. Verifique cables, WiFi o controladores de red.'))
     }
 
   } catch (err: any) {

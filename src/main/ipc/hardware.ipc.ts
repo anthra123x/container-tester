@@ -14,7 +14,8 @@ export function registerHardwareIpcHandlers(): void {
       category: 'STORAGE' as const,
       testName: d.device,
       status: d.smartStatus === 'Ok' || d.smartStatus === 'good' ? 'PASS' as const : 'WARN' as const,
-      value: `${d.type} ${(d.size / 1073741824).toFixed(0)} GB - ${d.usagePercent.toFixed(1)}% usado`
+      value: `${d.type} ${(d.size / 1073741824).toFixed(0)} GB - ${d.usagePercent.toFixed(1)}% usado`,
+      observations: d.smartStatus === 'Ok' || d.smartStatus === 'good' ? undefined : 'SMART reporta anomalías. Respalde sus datos.'
     }))
     return { results }
   })
@@ -24,13 +25,19 @@ export function registerHardwareIpcHandlers(): void {
     if (!data.hasBattery) {
       return { results: [{ id: 'battery', category: 'BATTERY' as const, testName: 'Batería', status: 'SKIP' as const, value: 'No detectada' }] }
     }
+    const healthStatus = (data.health >= 80 ? 'PASS' : data.health >= 60 ? 'WARN' : 'FAIL') as 'PASS' | 'WARN' | 'FAIL'
+    const wearStatus = (data.wearLevel < 20 ? 'PASS' : data.wearLevel < 40 ? 'WARN' : 'FAIL') as 'PASS' | 'WARN' | 'FAIL'
     const results = [
-      { id: 'battery-health', category: 'BATTERY' as const, testName: 'Salud', status: (data.health >= 80 ? 'PASS' : data.health >= 60 ? 'WARN' : 'FAIL') as 'PASS' | 'WARN' | 'FAIL', value: `${data.health}%` },
-      { id: 'battery-wear', category: 'BATTERY' as const, testName: 'Desgaste', status: (data.wearLevel < 20 ? 'PASS' : data.wearLevel < 40 ? 'WARN' : 'FAIL') as 'PASS' | 'WARN' | 'FAIL', value: `${data.wearLevel}%` },
+      { id: 'battery-health', category: 'BATTERY' as const, testName: 'Salud', status: healthStatus, value: `${data.health}%`,
+        observations: healthStatus === 'FAIL' ? 'Salud de batería crítica. Reemplácela.' : healthStatus === 'WARN' ? 'Salud de batería disminuida.' : undefined },
+      { id: 'battery-wear', category: 'BATTERY' as const, testName: 'Desgaste', status: wearStatus, value: `${data.wearLevel}%`,
+        observations: wearStatus === 'FAIL' ? 'Desgaste avanzado (>=40%). Reemplace la batería.' : wearStatus === 'WARN' ? 'Desgaste moderado (>=20%).' : undefined },
       { id: 'battery-capacity', category: 'BATTERY' as const, testName: 'Capacidad', status: 'PASS' as const, value: `${data.currentCapacity} / ${data.maxCapacity} mAh` },
     ]
     if (data.cycleCount) {
-      results.push({ id: 'battery-cycles', category: 'BATTERY' as const, testName: 'Ciclos', status: (data.cycleCount < 500 ? 'PASS' : 'WARN') as 'PASS' | 'WARN', value: `${data.cycleCount}` })
+      const cycleStatus = (data.cycleCount < 500 ? 'PASS' : 'WARN') as 'PASS' | 'WARN'
+      results.push({ id: 'battery-cycles', category: 'BATTERY' as const, testName: 'Ciclos', status: cycleStatus, value: `${data.cycleCount}`,
+        observations: cycleStatus === 'WARN' ? 'Ciclos de carga elevados (>=500).' : undefined })
     }
     return { results }
   })
@@ -40,7 +47,8 @@ export function registerHardwareIpcHandlers(): void {
     const results: any[] = []
     if (data.cpuTemperature != null) {
       const status = data.cpuTemperature < 75 ? 'PASS' : data.cpuTemperature < 85 ? 'WARN' : 'FAIL'
-      results.push({ id: 'sensor-cpu', category: 'SENSOR' as const, testName: 'Temperatura CPU', status, value: `${data.cpuTemperature}°C` })
+      results.push({ id: 'sensor-cpu', category: 'SENSOR' as const, testName: 'Temperatura CPU', status, value: `${data.cpuTemperature}°C`,
+        observations: status === 'FAIL' ? 'Temperatura CPU críticamente alta.' : status === 'WARN' ? 'Temperatura CPU elevada.' : undefined })
     }
     if (results.length === 0) {
       results.push({ id: 'sensor-none', category: 'SENSOR' as const, testName: 'Sensores', status: 'SKIP' as const, value: 'No disponibles' })
@@ -51,7 +59,8 @@ export function registerHardwareIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.NETWORK_GET_WIFI, async () => {
     const data = await getWifiInfo()
     const results: any[] = [
-      { id: 'wifi-adapter', category: 'NETWORK' as const, testName: 'Adaptador WiFi', status: data.adapterPresent ? 'PASS' as const : 'WARN' as const, value: data.adapterPresent ? data.adapterName : 'No presente' },
+      { id: 'wifi-adapter', category: 'NETWORK' as const, testName: 'Adaptador WiFi', status: data.adapterPresent ? 'PASS' as const : 'WARN' as const, value: data.adapterPresent ? data.adapterName : 'No presente',
+        observations: data.adapterPresent ? undefined : 'No se detectó adaptador WiFi. Verifique controladores o hardware.' },
     ]
     if (data.connected) {
       results.push({ id: 'wifi-connection', category: 'NETWORK' as const, testName: 'Conexión', status: 'PASS' as const, value: `SSID: ${data.ssid}` })

@@ -74,9 +74,14 @@ export function ProgressCard({ phase, index }: ProgressCardProps) {
           >
             <div className="p-4 space-y-2">
               {phase.results.map((result) => (
-                <div key={result.id} className="flex items-center justify-between text-sm">
-                  <span className="text-neutral-700">{result.testName}</span>
-                  <span className="font-medium">{result.value || '—'}</span>
+                <div key={result.id}>
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-neutral-700">{result.testName}</span>
+                    <span className="font-medium">{result.value || '—'}</span>
+                  </div>
+                  {result.observations && (
+                    <p className="text-xs text-danger mt-0.5 ml-0">{result.observations}</p>
+                  )}
                 </div>
               ))}
             </div>
