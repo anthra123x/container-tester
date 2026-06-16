@@ -44,7 +44,16 @@ export const IPC_CHANNELS = {
   // Settings
   SETTINGS_GET: 'settings:get',
   SETTINGS_SET: 'settings:set',
-  SETTINGS_SELECT_DIR: 'settings:select-dir'
+  SETTINGS_SELECT_DIR: 'settings:select-dir',
+
+  // Live metrics
+  GET_LIVE_METRICS: 'system:live-metrics',
+
+  // Benchmark
+  BENCHMARK_RUN_CPU: 'benchmark:run-cpu',
+  BENCHMARK_RUN_MEMORY: 'benchmark:run-memory',
+  BENCHMARK_RUN_DISK: 'benchmark:run-disk',
+  BENCHMARK_RESULT: 'benchmark:result',
 } as const
 
 export type IpcChannel = (typeof IPC_CHANNELS)[keyof typeof IPC_CHANNELS]

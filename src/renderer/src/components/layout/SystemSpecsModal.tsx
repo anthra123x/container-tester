@@ -1,6 +1,9 @@
 import { motion, AnimatePresence } from 'framer-motion'
-import { X, Cpu, MemoryStick, Monitor, HardDrive, Battery, Thermometer, Wifi, CircuitBoard, Info, Fan, Zap } from 'lucide-react'
+import { X, Cpu, MemoryStick, Monitor, HardDrive, Battery, Thermometer, Wifi, CircuitBoard, Info, Fan, Zap, RefreshCw } from 'lucide-react'
+import { useState } from 'react'
 import { useDiagnosticStore } from '../../stores/diagnostic.store'
+import { useIpc } from '../../hooks/useIpc'
+import { IPC_CHANNELS } from '../../../../shared/constants/ipc-channels'
 
 function formatBytes(bytes: number): string {
   if (!bytes) return '—'
@@ -61,8 +64,20 @@ export function SystemSpecsModal() {
   const systemInfo = useDiagnosticStore((s) => s.systemInfo)
   const systemSpecs = useDiagnosticStore((s) => s.systemSpecs)
   const specsModalOpen = useDiagnosticStore((s) => s.specsModalOpen)
+  const setSystemSpecs = useDiagnosticStore((s) => s.setSystemSpecs)
   const setSpecsModalOpen = useDiagnosticStore((s) => s.setSpecsModalOpen)
+  const { invoke } = useIpc()
   const loading = !systemSpecs && specsModalOpen
+  const [refreshing, setRefreshing] = useState(false)
+
+  const refreshSpecs = async () => {
+    setRefreshing(true)
+    try {
+      const specs = await invoke(IPC_CHANNELS.GET_SYSTEM_SPECS)
+      if (specs) setSystemSpecs(specs)
+    } catch { }
+    setRefreshing(false)
+  }
 
   if (!specsModalOpen) return null
 
@@ -104,12 +119,22 @@ export function SystemSpecsModal() {
                 <p className="text-xs text-neutral-500">{systemInfo?.hostname || 'Cargando...'}</p>
               </div>
             </div>
-            <button
-              onClick={() => setSpecsModalOpen(false)}
-              className="p-2 rounded-xl hover:bg-neutral-100 text-neutral-400 hover:text-neutral-600 transition-all hover:scale-105 active:scale-95"
-            >
-              <X className="w-4 h-4" />
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={refreshSpecs}
+                disabled={refreshing}
+                className={`p-2 rounded-xl hover:bg-neutral-100 text-neutral-400 hover:text-neutral-600 transition-all hover:scale-105 active:scale-95 ${refreshing ? 'animate-spin' : ''}`}
+                title="Actualizar datos"
+              >
+                <RefreshCw className="w-4 h-4" />
+              </button>
+              <button
+                onClick={() => setSpecsModalOpen(false)}
+                className="p-2 rounded-xl hover:bg-neutral-100 text-neutral-400 hover:text-neutral-600 transition-all hover:scale-105 active:scale-95"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
           </div>
 
           <div className="px-6 py-5 overflow-y-auto space-y-4 scroll-smooth">

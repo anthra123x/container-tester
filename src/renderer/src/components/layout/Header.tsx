@@ -19,6 +19,7 @@ const pageTitles: Record<string, string> = {
   '/diagnostic/manual/wifi': 'Prueba de WiFi',
   '/diagnostic/manual/bluetooth': 'Prueba de Bluetooth',
   '/diagnostic/manual/usb': 'Prueba de USB',
+  '/benchmark': 'Benchmark',
   '/reports': 'Reportes',
   '/history': 'Historial',
   '/settings': 'Configuración',

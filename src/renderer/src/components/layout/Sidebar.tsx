@@ -5,12 +5,14 @@ import {
   MousePointer2,
   Settings,
   Monitor,
+  Gauge,
 } from 'lucide-react'
 
 const navItems = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
   { to: '/diagnostic/auto', icon: Activity, label: 'Diagnóstico Automático' },
   { to: '/diagnostic/manual', icon: MousePointer2, label: 'Pruebas Manuales' },
+  { to: '/benchmark', icon: Gauge, label: 'Benchmark' },
   { to: '/settings', icon: Settings, label: 'Configuración' },
 ]
 

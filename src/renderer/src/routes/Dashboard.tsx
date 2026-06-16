@@ -10,11 +10,13 @@ import {
   Activity,
   ArrowRight,
   Shield,
+  Gauge,
 } from 'lucide-react'
 import { useDiagnosticStore } from '../stores/diagnostic.store'
 import { MetricCard } from '../components/diagnostic/MetricCard'
 import { Button } from '../components/shared/Button'
 import { useSystemInfo } from '../hooks/useSystemInfo'
+import { useLiveMetrics } from '../hooks/useLiveMetrics'
 
 function formatBytes(bytes: number): string {
   if (!bytes) return '—'
@@ -28,58 +30,62 @@ export function Dashboard() {
   const systemSpecs = useDiagnosticStore((s) => s.systemSpecs)
   const currentDiagnostic = useDiagnosticStore((s) => s.currentDiagnostic)
   useSystemInfo()
+  const { metrics: live } = useLiveMetrics(3000)
+
+  const mCpu = systemSpecs?.cpu
+  const mRam = systemSpecs?.ram
+  const mDisk = systemSpecs?.storage?.[0]
 
   const metrics = [
     {
       icon: <Cpu className="w-5 h-5" />,
       label: 'CPU',
-      value: systemSpecs?.cpu ? `${systemSpecs.cpu.brand || '—'}`.slice(0, 28) : '—',
-      subvalue: systemSpecs?.cpu ? `${systemSpecs.cpu.cores} núcleos @ ${systemSpecs.cpu.speed} GHz` : null,
-      status: (systemSpecs?.cpu?.usage ?? 0) >= 80 ? 'warning' as const : 'success' as const,
+      value: live.cpu.usage > 0
+        ? `${live.cpu.usage}%`
+        : (mCpu?.brand ? `${mCpu.brand}`.slice(0, 24) : '—'),
+      subvalue: mCpu
+        ? `${mCpu.cores} núcleos | ${live.cpu.speed || mCpu.speed} GHz${live.cpu.temperature != null ? ` | ${live.cpu.temperature}°C` : ''}`
+        : null,
+      status: live.cpu.usage >= 80 ? 'warning' as const : 'success' as const,
     },
     {
       icon: <MemoryStick className="w-5 h-5" />,
       label: 'RAM',
-      value: systemSpecs?.ram ? formatBytes(systemSpecs.ram.total) : '—',
-      subvalue: systemSpecs?.ram ? `${systemSpecs.ram.usagePercent}% usado` : null,
-      status: (systemSpecs?.ram?.usagePercent ?? 0) >= 85 ? 'warning' as const : 'success' as const,
+      value: live.ram.total > 0
+        ? `${live.ram.usagePercent}% (${formatBytes(live.ram.used)} / ${formatBytes(live.ram.total)})`
+        : (mRam ? formatBytes(mRam.total) : '—'),
+      subvalue: mRam ? `${mRam.type || ''} ${mRam.speed ? `@ ${mRam.speed} MHz` : ''}`.trim() || null : null,
+      status: live.ram.usagePercent >= 85 ? 'warning' as const : 'success' as const,
     },
     {
       icon: <HardDrive className="w-5 h-5" />,
       label: 'Disco',
-      value: systemSpecs?.storage?.[0] ? formatBytes(systemSpecs.storage[0].size) : '—',
-      subvalue: systemSpecs?.storage?.[0] ? `${systemSpecs.storage[0].usagePercent}% usado` : null,
-      status: (systemSpecs?.storage?.[0]?.usagePercent ?? 0) >= 90 ? 'danger' as const : 'success' as const,
+      value: live.storage.totalGB > 0
+        ? `${live.storage.usagePercent}% (${live.storage.freeGB} GB libres)`
+        : '—',
+      subvalue: mDisk && !Number.isNaN(mDisk.speed)
+        ? `${mDisk.type || '?'} — ${mDisk.speed ? `${mDisk.speed} MB/s` : ''}`
+        : null,
+      status: live.storage.usagePercent >= 90 ? 'danger' as const
+        : live.storage.usagePercent >= 75 ? 'warning' as const
+        : 'success' as const,
     },
     {
       icon: <Battery className="w-5 h-5" />,
       label: 'Batería',
-      value: systemSpecs?.battery?.hasBattery
-        ? systemSpecs.battery.isCharging ? 'Cargando' : `${systemSpecs.battery.health ?? '—'}% salud`
-        : 'No detectada',
-      subvalue: systemSpecs?.battery?.hasBattery && systemSpecs.battery.cycleCount != null
-        ? `${systemSpecs.battery.cycleCount} ciclos`
-        : null,
-      status: (systemSpecs?.battery?.health ?? 100) < 60 ? 'danger' as const
-        : (systemSpecs?.battery?.health ?? 100) < 80 ? 'warning' as const
+      value: live.battery.hasBattery
+        ? live.battery.isCharging
+          ? `Cargando${live.battery.health != null ? ` (${live.battery.health}% salud)` : ''}`
+          : `${live.battery.health ?? '—'}% salud`
+        : (systemSpecs?.battery?.hasBattery ? 'Conectado' : 'No detectada'),
+      subvalue: live.battery.hasBattery
+        ? `${live.battery.wearLevel != null ? `Desgaste ${live.battery.wearLevel}%` : ''}${live.battery.cycleCount != null ? ` • ${live.battery.cycleCount} ciclos` : ''}`
+        : (systemSpecs?.battery?.hasBattery && !live.battery.hasBattery ? 'Datos no disponibles en vivo' : null),
+      status: (live.battery.health ?? 100) < 60 ? 'danger' as const
+        : (live.battery.health ?? 100) < 80 ? 'warning' as const
         : 'success' as const,
     },
   ]
-
-  const container = {
-    hidden: { opacity: 0 },
-    show: {
-      opacity: 1,
-      transition: { staggerChildren: 0.08 },
-    },
-  }
-
-  const item = {
-    hidden: { opacity: 0, y: 20 },
-    show: { opacity: 1, y: 0 },
-  }
-
-  const lastDiagStatus = currentDiagnostic?.status === 'APROBADO'
     ? 'success'
     : currentDiagnostic?.status === 'APROBADO_CON_OBSERVACIONES'
     ? 'warning'
@@ -128,13 +134,21 @@ export function Dashboard() {
           ))}
         </motion.div>
 
-        <motion.div variants={item} className="flex gap-4">
+        <motion.div variants={item} className="flex gap-4 flex-wrap">
           <Button
             size="lg"
             icon={<Play className="w-5 h-5" />}
             onClick={() => navigate('/diagnostic/auto')}
           >
             Iniciar Diagnóstico Completo
+          </Button>
+          <Button
+            size="lg"
+            variant="secondary"
+            icon={<Gauge className="w-5 h-5" />}
+            onClick={() => navigate('/benchmark')}
+          >
+            Ejecutar Benchmark
           </Button>
         </motion.div>
 
