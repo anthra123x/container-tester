@@ -8,47 +8,61 @@ import {
   Play,
   Monitor,
   Activity,
+  ArrowRight,
+  Shield,
 } from 'lucide-react'
 import { useDiagnosticStore } from '../stores/diagnostic.store'
 import { MetricCard } from '../components/diagnostic/MetricCard'
 import { Button } from '../components/shared/Button'
-import { useEffect, useState } from 'react'
+import { useSystemInfo } from '../hooks/useSystemInfo'
+
+function formatBytes(bytes: number): string {
+  if (!bytes) return '—'
+  const gb = bytes / 1073741824
+  return `${gb.toFixed(1)} GB`
+}
 
 export function Dashboard() {
   const navigate = useNavigate()
   const systemInfo = useDiagnosticStore((s) => s.systemInfo)
+  const systemSpecs = useDiagnosticStore((s) => s.systemSpecs)
   const currentDiagnostic = useDiagnosticStore((s) => s.currentDiagnostic)
-  const [dateTime, setDateTime] = useState(new Date())
-
-  useEffect(() => {
-    const timer = setInterval(() => setDateTime(new Date()), 1000)
-    return () => clearInterval(timer)
-  }, [])
+  useSystemInfo()
 
   const metrics = [
     {
       icon: <Cpu className="w-5 h-5" />,
       label: 'CPU',
-      value: systemInfo?.model?.slice(0, 30) || '—',
-      status: 'success' as const,
+      value: systemSpecs?.cpu ? `${systemSpecs.cpu.brand || '—'}`.slice(0, 28) : '—',
+      subvalue: systemSpecs?.cpu ? `${systemSpecs.cpu.cores} núcleos @ ${systemSpecs.cpu.speed} GHz` : null,
+      status: (systemSpecs?.cpu?.usage ?? 0) >= 80 ? 'warning' as const : 'success' as const,
     },
     {
       icon: <MemoryStick className="w-5 h-5" />,
       label: 'RAM',
-      value: '—',
-      status: 'success' as const,
+      value: systemSpecs?.ram ? formatBytes(systemSpecs.ram.total) : '—',
+      subvalue: systemSpecs?.ram ? `${systemSpecs.ram.usagePercent}% usado` : null,
+      status: (systemSpecs?.ram?.usagePercent ?? 0) >= 85 ? 'warning' as const : 'success' as const,
     },
     {
       icon: <HardDrive className="w-5 h-5" />,
       label: 'Disco',
-      value: '—',
-      status: 'success' as const,
+      value: systemSpecs?.storage?.[0] ? formatBytes(systemSpecs.storage[0].size) : '—',
+      subvalue: systemSpecs?.storage?.[0] ? `${systemSpecs.storage[0].usagePercent}% usado` : null,
+      status: (systemSpecs?.storage?.[0]?.usagePercent ?? 0) >= 90 ? 'danger' as const : 'success' as const,
     },
     {
       icon: <Battery className="w-5 h-5" />,
       label: 'Batería',
-      value: '—',
-      status: 'warning' as const,
+      value: systemSpecs?.battery?.hasBattery
+        ? systemSpecs.battery.isCharging ? 'Cargando' : `${systemSpecs.battery.health ?? '—'}% salud`
+        : 'No detectada',
+      subvalue: systemSpecs?.battery?.hasBattery && systemSpecs.battery.cycleCount != null
+        ? `${systemSpecs.battery.cycleCount} ciclos`
+        : null,
+      status: (systemSpecs?.battery?.health ?? 100) < 60 ? 'danger' as const
+        : (systemSpecs?.battery?.health ?? 100) < 80 ? 'warning' as const
+        : 'success' as const,
     },
   ]
 
@@ -71,6 +85,8 @@ export function Dashboard() {
     ? 'warning'
     : 'danger'
 
+  const statusColors = { success: 'bg-success/10 text-success border-success/20', warning: 'bg-warning/10 text-warning border-warning/20', danger: 'bg-danger/10 text-danger border-danger/20' }
+
   return (
     <div className="max-w-6xl mx-auto">
       <motion.div
@@ -80,37 +96,30 @@ export function Dashboard() {
         className="space-y-6"
       >
         <motion.div variants={item}>
-          <div className="flex items-center justify-between mb-1">
-            <div className="flex items-center gap-3">
-              <Monitor className="w-7 h-7 text-primary-500" />
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <div className="p-3 bg-gradient-to-br from-primary-500 to-primary-700 rounded-2xl shadow-lg shadow-primary-500/20">
+                <Monitor className="w-6 h-6 text-white" />
+              </div>
               <div>
-                <h1 className="text-2xl font-bold text-primary-800">
+                <h1 className="text-2xl font-bold text-primary-900">
                   {systemInfo?.hostname || 'Container Diagnostic Suite'}
                 </h1>
-                <p className="text-sm text-neutral-700">
-                  {systemInfo?.manufacturer} {systemInfo?.model} • {systemInfo?.serial}
+                <p className="text-sm text-neutral-500">
+                  {[systemInfo?.manufacturer, systemInfo?.model].filter(Boolean).join(' ')}
+                  {systemInfo?.serial ? ` • ${systemInfo.serial}` : ''}
                 </p>
               </div>
             </div>
-            <div className="text-right">
-              <p className="text-sm text-neutral-700 font-medium">
-                {dateTime.toLocaleDateString('es-MX', {
-                  weekday: 'long',
-                  day: 'numeric',
-                  month: 'long',
-                  year: 'numeric',
-                })}
-              </p>
-              <p className="text-xs text-neutral-700">
-                {dateTime.toLocaleTimeString('es-MX', {
-                  hour: '2-digit',
-                  minute: '2-digit',
-                  second: '2-digit',
+            <div className="hidden sm:block text-right">
+              <p className="text-xs text-neutral-400 font-medium uppercase tracking-wider">
+                {new Date().toLocaleDateString('es-MX', {
+                  weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
                 })}
               </p>
             </div>
           </div>
-          <div className="w-16 h-1 bg-primary-500 rounded-full mt-3" />
+          <div className="w-20 h-1 bg-gradient-to-r from-primary-500 to-primary-300 rounded-full mt-4" />
         </motion.div>
 
         <motion.div variants={item} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -132,25 +141,48 @@ export function Dashboard() {
         {currentDiagnostic && (
           <motion.div
             variants={item}
-            className="bg-white rounded-xl border border-neutral-200 p-5"
+            className="bg-white rounded-2xl border border-neutral-200/60 p-6 shadow-sm hover:shadow-md transition-shadow"
           >
-            <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-3">
-                <Activity className="w-5 h-5 text-primary-500" />
-                <h3 className="font-semibold text-primary-800">Último Diagnóstico</h3>
+                <div className="p-2 bg-primary-50 rounded-xl">
+                  <Activity className="w-5 h-5 text-primary-600" />
+                </div>
+                <div>
+                  <h3 className="font-semibold text-primary-900">Último Diagnóstico</h3>
+                  <p className="text-xs text-neutral-500">
+                    {currentDiagnostic.completedAt
+                      ? new Date(currentDiagnostic.completedAt).toLocaleString('es-MX')
+                      : '—'}
+                  </p>
+                </div>
               </div>
-              <span className={`px-3 py-1 rounded-full text-xs font-medium text-white ${
-                lastDiagStatus === 'success' ? 'bg-success' : lastDiagStatus === 'warning' ? 'bg-warning' : 'bg-danger'
-              }`}>
-                {currentDiagnostic.status}
+              <span className={`px-3 py-1.5 rounded-full text-xs font-bold uppercase tracking-wider border ${statusColors[lastDiagStatus]}`}>
+                {currentDiagnostic.status === 'APROBADO' ? 'Aprobado' : currentDiagnostic.status === 'APROBADO_CON_OBSERVACIONES' ? 'Con Observaciones' : 'No Aprobado'}
               </span>
             </div>
-            <p className="text-sm text-neutral-700">
-              {currentDiagnostic.completedAt
-                ? new Date(currentDiagnostic.completedAt).toLocaleString('es-MX')
-                : '—'}
+            <p className="text-sm text-neutral-600 leading-relaxed">{currentDiagnostic.summary}</p>
+            <div className="flex items-center gap-2 mt-4 pt-4 border-t border-neutral-100">
+              <Shield className="w-4 h-4 text-neutral-400" />
+              <span className="text-xs text-neutral-400">
+                {currentDiagnostic.results.filter(r => r.status === 'PASS').length} pruebas pasadas • {currentDiagnostic.results.filter(r => r.status === 'FAIL').length} fallos • {currentDiagnostic.results.filter(r => r.status === 'WARN').length} observaciones
+              </span>
+            </div>
+          </motion.div>
+        )}
+
+        {!currentDiagnostic && (
+          <motion.div variants={item} className="bg-gradient-to-br from-primary-50/50 to-primary-100/30 rounded-2xl border border-primary-100/40 p-8 text-center">
+            <div className="p-4 bg-primary-500/10 rounded-2xl inline-block mb-4">
+              <Activity className="w-10 h-10 text-primary-500" />
+            </div>
+            <h3 className="text-lg font-bold text-primary-800 mb-2">Realiza tu primer diagnóstico</h3>
+            <p className="text-sm text-neutral-600 mb-6 max-w-md mx-auto">
+              Ejecuta un diagnóstico completo para verificar el estado de todos los componentes de tu equipo.
             </p>
-            <p className="text-sm text-neutral-700 mt-1">{currentDiagnostic.summary}</p>
+            <Button size="lg" icon={<Play className="w-5 h-5" />} onClick={() => navigate('/diagnostic/auto')}>
+              Comenzar <ArrowRight className="w-4 h-4" />
+            </Button>
           </motion.div>
         )}
       </motion.div>

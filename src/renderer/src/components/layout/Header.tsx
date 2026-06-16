@@ -29,24 +29,24 @@ export function Header() {
   const systemInfo = useDiagnosticStore((s) => s.systemInfo)
   const setSystemSpecs = useDiagnosticStore((s) => s.setSystemSpecs)
   const setSpecsModalOpen = useDiagnosticStore((s) => s.setSpecsModalOpen)
+  const specsModalOpen = useDiagnosticStore((s) => s.specsModalOpen)
   const { invoke } = useIpc()
   const [dateTime, setDateTime] = useState(new Date())
 
   useEffect(() => {
-    const timer = setInterval(() => setDateTime(new Date()), 1000)
+    const timer = setInterval(() => setDateTime(new Date()), 30000)
     return () => clearInterval(timer)
   }, [])
 
   const title = pageTitles[location.pathname] || 'Container Diagnostic Suite'
 
-  const handleDeviceClick = async () => {
-    try {
-      const specs = await invoke(IPC_CHANNELS.GET_SYSTEM_SPECS)
-      setSystemSpecs(specs)
-    } catch {
-      // best-effort
-    }
+  const handleDeviceClick = () => {
     setSpecsModalOpen(true)
+    if (!useDiagnosticStore.getState().systemSpecs) {
+      invoke(IPC_CHANNELS.GET_SYSTEM_SPECS).then((specs) => {
+        setSystemSpecs(specs)
+      }).catch(() => {})
+    }
   }
 
   const statusDot = systemInfo

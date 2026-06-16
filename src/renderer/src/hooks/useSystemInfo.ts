@@ -18,17 +18,20 @@ export function useSystemInfo() {
     try {
       const info: SystemInfo | null = await invoke(IPC_CHANNELS.GET_SYSTEM_INFO)
       setSystemInfo(info)
+      invoke(IPC_CHANNELS.GET_SYSTEM_SPECS).then((specs) => {
+        setSystemSpecs(specs)
+      }).catch(() => {})
     } catch (err: any) {
       setError(err?.message || 'Error obteniendo información del sistema')
     } finally {
       setLoading(false)
     }
-  }, [invoke, setSystemInfo])
+  }, [invoke, setSystemInfo, setSystemSpecs])
 
   const loadSpecs = useCallback(async () => {
     try {
       const specs = await invoke(IPC_CHANNELS.GET_SYSTEM_SPECS)
-      setSystemSpecs(specs)
+      if (specs) setSystemSpecs(specs)
     } catch {
       // best-effort
     }
@@ -39,14 +42,11 @@ export function useSystemInfo() {
       refresh()
     } else {
       setLoading(false)
+      if (!useDiagnosticStore.getState().systemSpecs) {
+        loadSpecs()
+      }
     }
   }, [])
-
-  useEffect(() => {
-    if (systemInfo && !useDiagnosticStore.getState().systemSpecs) {
-      loadSpecs()
-    }
-  }, [systemInfo, loadSpecs])
 
   return { systemInfo, loading, error, refresh, loadSpecs }
 }

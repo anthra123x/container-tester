@@ -102,39 +102,89 @@ export interface StorageInfo {
   usagePercent: number
   smartStatus: string
   temperature: number | null
-  hoursUsed: number
+  hoursUsed: number | null
   health: number | null
+  reallocatedSectors?: number | null
+  pendingSectors?: number | null
+  crcErrors?: number | null
+  ssdWear?: number | null
+  totalWritesGB?: number | null
+  totalReadsGB?: number | null
+  partitionCount?: number | null
+  isBootDrive?: boolean
+  nvmePcieLanes?: string | null
+  formFactor?: string | null
+  serialNumber?: string | null
+  firmware?: string | null
 }
 
 export interface BatteryInfo {
   hasBattery: boolean
   isCharging: boolean
-  designCapacity: number
-  currentCapacity: number
-  maxCapacity: number
-  wearLevel: number
-  cycleCount: number
-  voltage: number
+  designCapacity: number | null
+  currentCapacity: number | null
+  maxCapacity: number | null
+  wearLevel: number | null
+  cycleCount: number | null
+  voltage: number | null
   temperature: number | null
-  health: number
+  health: number | null
+  chemistry?: string | null
+  manufactureDate?: string | null
+  serialNumber?: string | null
+  chargeRate?: number | null
+  dischargeRate?: number | null
+  estimatedRuntime?: number | null
+  designVoltage?: number | null
+  lowCapacityWarning?: number | null
 }
 
 export interface SensorInfo {
-  cpuTemperature: number | null
-  gpuTemperature: number | null
-  storageTemperature: number | null
-  cpuVoltage: number | null
-  fanSpeed: number | null
+  cpu: {
+    main: number | null
+    cores: number[]
+    max: number | null
+    packageTemp: number | null
+  }
+  gpu: {
+    temperature: number | null
+    hotspotTemp: number | null
+    memoryTemp: number | null
+    coreClock: number | null
+    memoryClock: number | null
+    fanSpeed: number | null
+    fanPercent: number | null
+    powerDraw: number | null
+  }
+  storage: { device: string; temperature: number | null }[]
+  motherboard: {
+    temp: number | null
+    chipsetTemp: number | null
+    voltageRails: { name: string; voltage: number | null }[]
+  }
+  fans: { name: string; rpm: number | null; percentage: number | null }[]
 }
 
 export interface WifiInfo {
-  adapterPresent: boolean
-  adapterName: string
-  enabled: boolean
-  connected: boolean
-  ssid: string
-  signalStrength: number
-  availableNetworks: string[]
+  networks: {
+    ssid: string
+    bssid: string
+    mode: string
+    channel: number
+    frequency: number
+    signalLevel: number | null
+    quality: number | null
+    security: string
+    wpaFlags: string
+    rsnFlags: string
+  }[]
+  interfaces: {
+    id: string
+    iface: string
+    model: string
+    vendor: string
+    mac: string
+  }[]
 }
 
 export interface BluetoothInfo {
