@@ -52,7 +52,7 @@ async function runSystemPhase(): Promise<AutoDiagnosticPhase> {
       if (ext.secureBoot !== null) results.push(result('sys-secureboot', 'OS', 'Secure Boot', ext.secureBoot ? 'PASS' : 'WARN', ext.secureBoot ? 'Activado' : 'Desactivado', ext.secureBoot ? undefined : 'Secure Boot está desactivado. El sistema es más vulnerable a ataques de bootkit.'))
       if (ext.tpm) results.push(result('sys-tpm', 'OS', 'TPM', ext.tpm.present ? 'PASS' : 'WARN', ext.tpm.present ? `Presente (${ext.tpm.version || 'vN/A'})${ext.tpm.enabled ? ' • Activado' : ' • Desactivado'}` : 'No presente', ext.tpm.present ? (ext.tpm.enabled ? undefined : 'TPM está desactivado en BIOS/UEFI. BitLocker y Windows Hello requieren TPM activado.') : 'TPM no detectado. El equipo no cumple requisitos de seguridad modernos.'))
       if (ext.virtualization) {
-        const virtStatus: TestStatus = ext.virtualization.enabled ? 'PASS' : ext.virtualization.supported ? 'WARN' : 'FAIL'
+        const virtStatus: TestStatus = ext.virtualization.enabled ? 'PASS' : 'WARN'
         const virtObs = ext.virtualization.enabled ? undefined
           : ext.virtualization.supported
             ? 'Virtualización soportada pero desactivada en BIOS/UEFI. Actívela para mejorar rendimiento en máquinas virtuales y WSL.'
