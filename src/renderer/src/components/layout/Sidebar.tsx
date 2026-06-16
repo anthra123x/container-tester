@@ -3,8 +3,6 @@ import {
   LayoutDashboard,
   Activity,
   MousePointer2,
-  FileText,
-  Clock,
   Settings,
 } from 'lucide-react'
 
@@ -12,8 +10,6 @@ const navItems = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
   { to: '/diagnostic/auto', icon: Activity, label: 'Diagnóstico Automático' },
   { to: '/diagnostic/manual', icon: MousePointer2, label: 'Pruebas Manuales' },
-  { to: '/reports', icon: FileText, label: 'Reportes' },
-  { to: '/history', icon: Clock, label: 'Historial' },
   { to: '/settings', icon: Settings, label: 'Configuración' },
 ]
 

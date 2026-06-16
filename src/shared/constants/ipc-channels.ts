@@ -41,24 +41,6 @@ export const IPC_CHANNELS = {
   MANUAL_USB_MONITOR_STOP: 'manual:usb-monitor-stop',
   MANUAL_USB_EVENT: 'manual:usb-event',
 
-  // Reports
-  REPORT_GENERATE: 'report:generate',
-  REPORT_OPEN: 'report:open',
-  REPORT_GET: 'report:get',
-  REPORT_LIST: 'report:list',
-
-  // History
-  HISTORY_LIST: 'history:list',
-  HISTORY_GET: 'history:get',
-  HISTORY_SEARCH: 'history:search',
-  HISTORY_DELETE: 'history:delete',
-
-  // Database
-  DB_GET_DEVICE: 'db:get-device',
-  DB_SAVE_DEVICE: 'db:save-device',
-  DB_SAVE_DIAGNOSTIC: 'db:save-diagnostic',
-  DB_GET_DIAGNOSTIC: 'db:get-diagnostic',
-
   // Settings
   SETTINGS_GET: 'settings:get',
   SETTINGS_SET: 'settings:set',

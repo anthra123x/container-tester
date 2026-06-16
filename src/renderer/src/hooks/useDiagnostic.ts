@@ -49,15 +49,6 @@ export function useDiagnostic() {
           : 'APROBADO_CON_OBSERVACIONES'
 
       store.completeDiagnostic(finalStatus, 'Diagnóstico automático completado')
-
-      const saved = store.currentDiagnostic
-      if (saved) {
-        try {
-          await invoke(IPC_CHANNELS.DB_SAVE_DIAGNOSTIC, saved)
-        } catch {
-          console.warn('Failed to save diagnostic to database')
-        }
-      }
     } catch (err: any) {
       setError(err?.message || 'Error ejecutando diagnóstico')
     } finally {

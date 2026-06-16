@@ -13,8 +13,6 @@ import { AudioTest } from './routes/AudioTest'
 import { WiFiTest } from './routes/WiFiTest'
 import { BluetoothTest } from './routes/BluetoothTest'
 import { USBTest } from './routes/USBTest'
-import { Reports } from './routes/Reports'
-import { History } from './routes/History'
 import { Settings } from './routes/Settings'
 import { useEffect } from 'react'
 import { useIpc } from './hooks/useIpc'
@@ -61,8 +59,6 @@ export default function App() {
           <Route path="/diagnostic/manual/wifi" element={<AnimatedPage><WiFiTest /></AnimatedPage>} />
           <Route path="/diagnostic/manual/bluetooth" element={<AnimatedPage><BluetoothTest /></AnimatedPage>} />
           <Route path="/diagnostic/manual/usb" element={<AnimatedPage><USBTest /></AnimatedPage>} />
-          <Route path="/reports" element={<AnimatedPage><Reports /></AnimatedPage>} />
-          <Route path="/history" element={<AnimatedPage><History /></AnimatedPage>} />
           <Route path="/settings" element={<AnimatedPage><Settings /></AnimatedPage>} />
         </Route>
       </Routes>

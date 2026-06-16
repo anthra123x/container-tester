@@ -9,8 +9,7 @@ export default defineConfig({
       outDir: 'out/main',
       rollupOptions: {
         external: [
-          'systeminformation',
-          'sql.js'
+          'systeminformation'
         ]
       }
     }
