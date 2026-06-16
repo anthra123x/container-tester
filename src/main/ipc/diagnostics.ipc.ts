@@ -87,8 +87,8 @@ async function runCPUPhase(): Promise<AutoDiagnosticPhase> {
       throttling ? 'El CPU está funcionando a la mitad de su velocidad máxima. Posible sobrecalentamiento o limitación de energía. Verifique la ventilación.' : undefined))
 
     let usageStatus: TestStatus = 'PASS'
-    if (cpu.usage >= 90) usageStatus = 'FAIL'
-    else if (cpu.usage >= 70) usageStatus = 'WARN'
+    if (cpu.usage >= 95) usageStatus = 'FAIL'
+    else if (cpu.usage >= 80) usageStatus = 'WARN'
     results.push(result('cpu-usage', 'HARDWARE', 'Uso actual', usageStatus, `${cpu.usage}%`,
       usageStatus === 'FAIL' ? 'Uso de CPU críticamente alto. Revise procesos en segundo plano o posibles malware.' : usageStatus === 'WARN' ? 'Uso de CPU elevado. Cierre aplicaciones innecesarias.' : undefined))
 
@@ -148,14 +148,14 @@ async function runRAMPhase(): Promise<AutoDiagnosticPhase> {
     results.push(result('ram-total', 'HARDWARE', 'Memoria total', 'PASS', `${totalGB.toFixed(2)} GB`))
 
     let usageStatus: TestStatus = 'PASS'
-    if (ram.usagePercent >= 90) usageStatus = 'FAIL'
-    else if (ram.usagePercent >= 70) usageStatus = 'WARN'
+    if (ram.usagePercent >= 95) usageStatus = 'FAIL'
+    else if (ram.usagePercent >= 85) usageStatus = 'WARN'
     results.push(result('ram-usage', 'HARDWARE', 'Uso de memoria', usageStatus, `${ram.usagePercent}% (${usedGB.toFixed(2)} GB usados)`,
       usageStatus === 'FAIL' ? 'Uso de memoria críticamente alto. El sistema puede volverse lento o inestable. Cierre aplicaciones o amplíe la RAM.' : usageStatus === 'WARN' ? 'Uso de memoria elevado. Cierre aplicaciones innecesarias para liberar recursos.' : undefined))
 
     let freeStatus: TestStatus = 'PASS'
     if (freeGB < 1) freeStatus = 'FAIL'
-    else if (freeGB < 2.5) freeStatus = 'WARN'
+    else if (freeGB < 1.5) freeStatus = 'WARN'
     results.push(result('ram-free', 'HARDWARE', 'Memoria libre', freeStatus, `${freeGB.toFixed(2)} GB`,
       freeStatus === 'FAIL' ? 'Memoria libre insuficiente. Riesgo de errores y rendimiento degradado. Considere ampliar la RAM.' : freeStatus === 'WARN' ? 'Poca memoria libre. Cierre aplicaciones para liberar memoria.' : undefined))
 
@@ -212,7 +212,7 @@ async function runGPUPhase(): Promise<AutoDiagnosticPhase> {
   try {
     const gpu = await getGPUInfo()
 
-    const vramGB = gpu.vram > 0 ? (gpu.vram / 1024).toFixed(1) : '0'
+    const vramGB = gpu.vram > 0 ? (gpu.vram / 1073741824).toFixed(1) : '0'
     results.push(result('gpu-model', 'HARDWARE', 'Tarjeta gráfica', 'PASS', `${gpu.vendor} ${gpu.model}`))
     results.push(result('gpu-vram', 'HARDWARE', 'VRAM', 'PASS', `${vramGB} GB`))
     results.push(result('gpu-driver', 'HARDWARE', 'Controlador', 'PASS', gpu.driverVersion))
@@ -426,9 +426,9 @@ async function runBatteryPhase(): Promise<AutoDiagnosticPhase> {
     if (extBattery.dischargeRate) results.push(result('bat-discharge-rate', 'BATTERY', 'Tasa de descarga', 'PASS', `${extBattery.dischargeRate} W`))
     if (extBattery.estimatedRuntime) {
       const mins = Math.round(extBattery.estimatedRuntime / 60)
-      results.push(result('bat-runtime', 'BATTERY', 'Tiempo restante estimado', mins > 30 ? 'PASS' : mins > 10 ? 'WARN' : 'FAIL',
+      results.push(result('bat-runtime', 'BATTERY', 'Tiempo restante estimado', mins > 60 ? 'PASS' : mins > 15 ? 'WARN' : 'FAIL',
         `${mins} minutos`,
-        mins <= 10 ? 'Tiempo restante críticamente bajo. Conecte el cargador inmediatamente.' : mins <= 30 ? 'Poco tiempo de batería restante.' : undefined))
+        mins <= 15 ? 'Tiempo restante críticamente bajo. Conecte el cargador inmediatamente.' : mins <= 60 ? 'Poco tiempo de batería restante.' : undefined))
     }
   } catch (err: any) {
     results.push(result('bat-error', 'BATTERY', 'Error batería', 'FAIL', err?.message || 'Error'))
@@ -548,13 +548,14 @@ async function runNetworkPhase(): Promise<AutoDiagnosticPhase> {
       const linkStr = net.speed ? `${net.speed} Mbps` : ''
       results.push(result(`net-iface-${net.iface}`, 'NETWORK', `${net.iface} (${interfaceType})`,
         isUp ? 'PASS' : 'WARN',
-        `${ipInfo} • ${isUp ? 'Activo' : 'Inactivo'}${linkStr ? ` • ${linkStr}` : ''}`))
+        `${ipInfo} • ${isUp ? 'Activo' : 'Inactivo'}${linkStr ? ` • ${linkStr}` : ''}`,
+        isUp ? undefined : `Interfaz de red inactiva. Verifique el cable de red o el controlador.`))
     }
 
     const hasUpInterface = nets.some(n => n.operstate === 'up' && n.type !== 'virtual')
 
     const pingResult = await runPowerShellWithRetry<string>(
-      'Test-Connection -ComputerName 8.8.8.8 -Count 2 -Quiet -ErrorAction SilentlyContinue; if ($?) { Write-Output "OK" } else { Write-Output "FAIL" }',
+      '$r = Test-Connection -ComputerName 8.8.8.8 -Count 2 -Quiet -ErrorAction SilentlyContinue; if ($r -eq $true) { Write-Output "OK" } else { Write-Output "FAIL" }',
       (r) => r, 1, 10000
     )
     if (pingResult) {
@@ -580,7 +581,7 @@ async function runNetworkPhase(): Promise<AutoDiagnosticPhase> {
     }
 
     const dnsResult = await runPowerShellWithRetry<string>(
-      'Resolve-DnsName -Name google.com -Type A -QuickTimeout -ErrorAction SilentlyContinue; if ($?) { Write-Output "OK" } else { Write-Output "FAIL" }',
+      '$r = Resolve-DnsName -Name google.com -Type A -QuickTimeout -ErrorAction SilentlyContinue; if ($r) { Write-Output "OK" } else { Write-Output "FAIL" }',
       (r) => r, 1, 10000
     )
     if (dnsResult) {

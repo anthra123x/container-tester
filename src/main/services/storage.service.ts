@@ -99,10 +99,11 @@ async function getDiskIOStats(deviceIndex: number): Promise<{ readsGB: number | 
     } catch { $null }
     return "{ ""ReadGB"": $reads, ""WriteGB"": $writes }"
   `
-  return runPowerShellWithRetry<{ readsGB: number | null; writesGB: number | null }>(
+  const result = await runPowerShellWithRetry<{ readsGB: number | null; writesGB: number | null }>(
     script,
     JSON.parse
-  ) ?? { readsGB: null, writesGB: null }
+  )
+  return result ?? { readsGB: null, writesGB: null }
 }
 
 async function getDiskSMARTFallback(deviceIndex: number): Promise<{
