@@ -1,0 +1,8 @@
+node_modules/
+out/
+dist/win-unpacked/
+dist/container-diagnostic-suite-*.7z
+dist/builder-debug.yml
+*.log
+.DS_Store
+Thumbs.db

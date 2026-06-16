@@ -1,0 +1,20 @@
+appId: com.container.diagnosticsuite
+productName: Container Diagnostic Suite
+directories:
+  output: dist
+asar: true
+asarUnpack:
+  - "node_modules/sql.js/dist/sql-wasm.wasm"
+  - "node_modules/systeminformation/**"
+compression: normal
+win:
+  target:
+    - portable
+  icon: resources/icons/icon.ico
+  artifactName: "CDS-Portable-${version}.exe"
+
+extraResources:
+  - from: scripts/
+    to: scripts/
+    filter:
+      - "**/*.ps1"

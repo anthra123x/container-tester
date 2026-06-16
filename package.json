@@ -1,0 +1,38 @@
+{
+  "name": "container-diagnostic-suite",
+  "version": "1.0.0",
+  "description": "Container Diagnostic Suite - Professional hardware diagnostic tool",
+  "main": "./out/main/index.js",
+  "author": "Container",
+  "license": "MIT",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
+    "postinstall": "electron-builder install-app-deps"
+  },
+  "dependencies": {
+    "electron-store": "^10.0.0",
+    "framer-motion": "^12.9.2",
+    "lucide-react": "^0.511.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "react-router-dom": "^7.6.1",
+    "recharts": "^2.15.3",
+    "sql.js": "^1.14.1",
+    "systeminformation": "^5.25.11",
+    "zustand": "^5.0.5"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.1",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "@vitejs/plugin-react": "^4.7.0",
+    "electron": "^34.0.0",
+    "electron-builder": "^26.15.3",
+    "electron-vite": "^2.3.0",
+    "tailwindcss": "^4.3.1",
+    "typescript": "^5.7.0",
+    "vite": "^5.0.0"
+  }
+}
