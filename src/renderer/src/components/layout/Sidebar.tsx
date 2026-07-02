@@ -7,6 +7,7 @@ import {
   Monitor,
   Gauge,
   ShieldCheck,
+  Cpu,
 } from 'lucide-react'
 
 const navItems = [
@@ -14,6 +15,7 @@ const navItems = [
   { to: '/diagnostic/auto', icon: Activity, label: 'Diagnóstico Automático' },
   { to: '/diagnostic/manual', icon: MousePointer2, label: 'Pruebas Manuales' },
   { to: '/benchmark', icon: Gauge, label: 'Benchmark' },
+  { to: '/drivers', icon: Cpu, label: 'Drivers' },
   { to: '/activation', icon: ShieldCheck, label: 'Activación' },
   { to: '/settings', icon: Settings, label: 'Configuración' },
 ]
@@ -54,7 +56,7 @@ export function Sidebar() {
       </nav>
 
       <div className="p-4 border-t border-primary-700/30">
-        <p className="text-primary-400 text-[10px] font-mono tracking-wider">v1.2.1</p>
+        <p className="text-primary-400 text-[10px] font-mono tracking-wider">v1.4.0</p>
       </div>
     </aside>
   )

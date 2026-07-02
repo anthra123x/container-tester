@@ -1,6 +1,7 @@
 node_modules/
 out/
 dist/win-unpacked/
+dist/CDS-Portable-*.exe
 dist/container-diagnostic-suite-*.7z
 dist/builder-debug.yml
 *.log

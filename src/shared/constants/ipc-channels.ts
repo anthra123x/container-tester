@@ -61,6 +61,12 @@ export const IPC_CHANNELS = {
   ACTIVATION_RUN_MAS: 'activation:run-mas',
   ACTIVATION_PROGRESS: 'activation:progress',
   ACTIVATION_COMPLETE: 'activation:complete',
+
+  // Drivers
+  DRIVERS_SCAN: 'drivers:scan',
+  DRIVERS_CHECK_UPDATES: 'drivers:check-updates',
+  DRIVERS_INSTALL_UPDATES: 'drivers:install-updates',
+  DRIVERS_PROGRESS: 'drivers:progress',
 } as const
 
 export type IpcChannel = (typeof IPC_CHANNELS)[keyof typeof IPC_CHANNELS]

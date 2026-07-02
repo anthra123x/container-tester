@@ -1,6 +1,6 @@
 {
   "name": "container-diagnostic-suite",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "Container Diagnostic Suite - Professional hardware diagnostic tool",
   "main": "./out/main/index.js",
   "author": "Container",

@@ -16,6 +16,7 @@ import { USBTest } from './routes/USBTest'
 import { Benchmark } from './routes/Benchmark'
 import { Settings } from './routes/Settings'
 import { Activation } from './routes/Activation'
+import { Drivers } from './routes/Drivers'
 import { useEffect } from 'react'
 import { useIpc } from './hooks/useIpc'
 import { useSystemInfo } from './hooks/useSystemInfo'
@@ -63,6 +64,7 @@ export default function App() {
           <Route path="/diagnostic/manual/usb" element={<AnimatedPage><USBTest /></AnimatedPage>} />
           <Route path="/benchmark" element={<AnimatedPage><Benchmark /></AnimatedPage>} />
           <Route path="/activation" element={<AnimatedPage><Activation /></AnimatedPage>} />
+          <Route path="/drivers" element={<AnimatedPage><Drivers /></AnimatedPage>} />
           <Route path="/settings" element={<AnimatedPage><Settings /></AnimatedPage>} />
         </Route>
       </Routes>
