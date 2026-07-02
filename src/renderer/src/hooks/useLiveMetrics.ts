@@ -29,12 +29,22 @@ export function useLiveMetrics(intervalMs = 3000) {
   const [connected, setConnected] = useState(false)
   const { invoke } = useIpc()
   const mountedRef = useRef(true)
+  const hiddenRef = useRef(false)
+
+  useEffect(() => {
+    const onVisibility = () => {
+      hiddenRef.current = document.hidden
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => document.removeEventListener('visibilitychange', onVisibility)
+  }, [])
 
   useEffect(() => {
     mountedRef.current = true
     let timer: ReturnType<typeof setInterval>
 
     const poll = async () => {
+      if (hiddenRef.current) return
       try {
         const data = await invoke(IPC_CHANNELS.GET_LIVE_METRICS)
         if (data && mountedRef.current) {

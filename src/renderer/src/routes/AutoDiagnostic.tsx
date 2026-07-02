@@ -1,6 +1,7 @@
 import { motion, AnimatePresence } from 'framer-motion'
 import { Play, ArrowRight, Activity, CheckCircle, XCircle, AlertTriangle } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
+import { useShallow } from 'zustand/react/shallow'
 import { useDiagnosticStore } from '../stores/diagnostic.store'
 import { useDiagnostic } from '../hooks/useDiagnostic'
 import { ProgressCard } from '../components/diagnostic/ProgressCard'
@@ -17,7 +18,9 @@ const statusMap: Record<string, TestStatus> = {
 
 export function AutoDiagnostic() {
   const navigate = useNavigate()
-  const { isRunning, phases, currentDiagnostic } = useDiagnosticStore()
+  const { isRunning, phases, currentDiagnostic } = useDiagnosticStore(
+    useShallow((s) => ({ isRunning: s.isRunning, phases: s.phases, currentDiagnostic: s.currentDiagnostic }))
+  )
   const { runDiagnostic, loading } = useDiagnostic()
 
   const nonSkipped = phases.filter(p => p.status !== 'SKIP')

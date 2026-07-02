@@ -17,6 +17,7 @@ import { MetricCard } from '../components/diagnostic/MetricCard'
 import { Button } from '../components/shared/Button'
 import { useSystemInfo } from '../hooks/useSystemInfo'
 import { useLiveMetrics } from '../hooks/useLiveMetrics'
+import { useMemo } from 'react'
 
 function formatBytes(bytes: number): string {
   if (!bytes) return '—'
@@ -30,13 +31,13 @@ export function Dashboard() {
   const systemSpecs = useDiagnosticStore((s) => s.systemSpecs)
   const currentDiagnostic = useDiagnosticStore((s) => s.currentDiagnostic)
   useSystemInfo()
-  const { metrics: live } = useLiveMetrics(3000)
+  const { metrics: live } = useLiveMetrics(5000)
 
   const mCpu = systemSpecs?.cpu
   const mRam = systemSpecs?.ram
   const mDisk = systemSpecs?.storage?.[0]
 
-  const metrics = [
+  const metrics = useMemo(() => [
     {
       icon: <Cpu className="w-5 h-5" />,
       label: 'CPU',
@@ -87,7 +88,7 @@ export function Dashboard() {
         : (live.battery.health ?? 100) < 80 ? 'warning' as const
         : 'success' as const,
     },
-  ]
+  ], [live, systemSpecs])
 
   const container = {
     hidden: { opacity: 0 },

@@ -1,7 +1,20 @@
 import si from 'systeminformation'
-import { getBatteryInfo } from './battery.service'
+import { getBatteryInfo, type BatteryInfo } from './battery.service'
 
 const SI_TIMEOUT = 3000
+const BATTERY_CACHE_TTL = 30000
+
+let batteryCache: { data: BatteryInfo | null; ts: number } | null = null
+
+async function cachedBatteryInfo(): Promise<BatteryInfo | null> {
+  const now = Date.now()
+  if (batteryCache && (now - batteryCache.ts) < BATTERY_CACHE_TTL) {
+    return batteryCache.data
+  }
+  const data = await getBatteryInfo()
+  batteryCache = { data, ts: now }
+  return data
+}
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return Promise.race([
@@ -33,7 +46,7 @@ export async function getLiveMetrics(): Promise<LiveMetrics> {
     withTimeout(si.cpuTemperature(), SI_TIMEOUT, 'cpuTemperature'),
     withTimeout(si.cpu(), SI_TIMEOUT, 'cpu'),
     withTimeout(si.fsSize(), SI_TIMEOUT, 'fsSize'),
-    getBatteryInfo(),
+    cachedBatteryInfo(),
     withTimeout(si.time(), SI_TIMEOUT, 'time'),
   ])
 
