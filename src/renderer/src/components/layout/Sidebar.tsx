@@ -6,6 +6,7 @@ import {
   Settings,
   Monitor,
   Gauge,
+  ShieldCheck,
 } from 'lucide-react'
 
 const navItems = [
@@ -13,6 +14,7 @@ const navItems = [
   { to: '/diagnostic/auto', icon: Activity, label: 'Diagnóstico Automático' },
   { to: '/diagnostic/manual', icon: MousePointer2, label: 'Pruebas Manuales' },
   { to: '/benchmark', icon: Gauge, label: 'Benchmark' },
+  { to: '/activation', icon: ShieldCheck, label: 'Activación' },
   { to: '/settings', icon: Settings, label: 'Configuración' },
 ]
 

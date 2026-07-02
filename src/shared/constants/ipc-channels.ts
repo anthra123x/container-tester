@@ -54,6 +54,13 @@ export const IPC_CHANNELS = {
   BENCHMARK_RUN_MEMORY: 'benchmark:run-memory',
   BENCHMARK_RUN_DISK: 'benchmark:run-disk',
   BENCHMARK_RESULT: 'benchmark:result',
+
+  // Activation
+  ACTIVATION_GET_WINDOWS: 'activation:get-windows',
+  ACTIVATION_GET_OFFICE: 'activation:get-office',
+  ACTIVATION_RUN_MAS: 'activation:run-mas',
+  ACTIVATION_PROGRESS: 'activation:progress',
+  ACTIVATION_COMPLETE: 'activation:complete',
 } as const
 
 export type IpcChannel = (typeof IPC_CHANNELS)[keyof typeof IPC_CHANNELS]

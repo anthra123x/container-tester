@@ -4,6 +4,7 @@ import { registerHardwareIpcHandlers } from './hardware.ipc'
 import { registerManualTestsIpcHandlers } from './manual-tests.ipc'
 import { registerSettingsIpcHandlers } from './settings.ipc'
 import { registerLiveDataIPC } from './live-data.ipc'
+import { registerActivationIpcHandlers } from './activation.ipc'
 
 export function registerAllIpcHandlers(): void {
   registerSystemIpcHandlers()
@@ -12,4 +13,5 @@ export function registerAllIpcHandlers(): void {
   registerManualTestsIpcHandlers()
   registerSettingsIpcHandlers()
   registerLiveDataIPC()
+  registerActivationIpcHandlers()
 }
