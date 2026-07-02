@@ -2,9 +2,9 @@ import { createHash } from 'crypto'
 import { writeFileSync, existsSync, unlinkSync } from 'fs'
 import { join } from 'path'
 import { BrowserWindow } from 'electron'
-import { runPowerShell, runPowerShellWithRetry } from './powershell'
+import { runPowerShell } from './powershell'
 import { IPC_CHANNELS } from '../../shared/constants/ipc-channels'
-import type { WindowsActivationStatus, OfficeActivationStatus, ActivationStatus } from '../../shared/types/activation.types'
+import type { WindowsActivationStatus, OfficeActivationStatus } from '../../shared/types/activation.types'
 
 const MAS_URLS = [
   'https://raw.githubusercontent.com/massgravel/Microsoft-Activation-Scripts/694976cd35c9601ce280d7b8fc920f257c97b627/MAS/All-In-One-Version-KL/MAS_AIO.cmd',
@@ -23,7 +23,9 @@ function sendProgress(progress: number, message: string, stage: 'DOWNLOADING' | 
 
 export async function getWindowsActivationStatus(): Promise<WindowsActivationStatus | null> {
   const script = `
-$lics = Get-CimInstance -ClassName SoftwareLicensingProduct -ErrorAction SilentlyContinue | Where-Object { $_.PartialProductKey -ne $null }
+$windowsAppId = '55c92734-d682-4d71-983e-d6ec3f16059f'
+
+$allLicenses = Get-CimInstance -ClassName SoftwareLicensingProduct -ErrorAction SilentlyContinue
 $os = Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue
 
 $result = @{
@@ -44,10 +46,21 @@ if ($os) {
   $result.edition = $os.Caption
 }
 
-if ($lics) {
-  $first = $lics | Select-Object -First 1
+# 1) Look for the Windows product by ApplicationId with a partial key
+$winLic = $allLicenses | Where-Object { $_.ApplicationId -eq $windowsAppId -and $_.PartialProductKey -ne $null } | Select-Object -First 1
 
-  $statusText = switch ($first.LicenseStatus) {
+# 2) Fallback: any Windows product regardless of key
+if (-not $winLic) {
+  $winLic = $allLicenses | Where-Object { $_.ApplicationId -eq $windowsAppId } | Select-Object -First 1
+}
+
+# 3) Last resort: any product with a partial key (for non-standard scenarios)
+if (-not $winLic) {
+  $winLic = $allLicenses | Where-Object { $_.PartialProductKey -ne $null } | Select-Object -First 1
+}
+
+if ($winLic) {
+  $statusText = switch ($winLic.LicenseStatus) {
     0 { 'Sin licencia' }
     1 { 'Activado' }
     2 { 'Grace period' }
@@ -55,29 +68,39 @@ if ($lics) {
     4 { 'No genuino' }
     5 { 'Evaluación' }
     6 { 'Notificaciones' }
-    default { "Estado $($first.LicenseStatus)" }
+    default { "Estado $($winLic.LicenseStatus)" }
   }
 
-  $vlType = switch ($first.VLActivationType) {
+  $vlType = switch ($winLic.VLActivationType) {
     0 { 'None' }
     1 { 'KMS' }
     2 { 'Token' }
     3 { 'KMS+Token' }
-    default { "Unknown ($($first.VLActivationType))" }
+    default { "Unknown ($($winLic.VLActivationType))" }
   }
 
-  $result.activated = ($first.LicenseStatus -eq 1)
+  $result.activated = ($winLic.LicenseStatus -eq 1)
   $result.licenseStatus = $statusText
-  $result.productName = $first.Name
-  $result.productId = $first.ProductID
-  $result.partialProductKey = $first.PartialProductKey
-  $result.licenseChannel = $first.ProductKeyChannel
+  $result.productName = $winLic.Name
+  $result.productId = $winLic.ProductID
+  $result.partialProductKey = $winLic.PartialProductKey
+  $result.licenseChannel = $winLic.ProductKeyChannel
   $result.vlActivationType = $vlType
-  $result.tokenSource = $first.TokenSource
+  $result.tokenSource = $winLic.TokenSource
 
   if (-not $result.activated) {
-    $result.gracePeriodRemaining = $first.GracePeriodRemaining
-    $result.evaluationEndDate = $first.GracePeriodRemaining
+    if ($winLic.GracePeriodRemaining -ne $null) {
+      $result.gracePeriodRemaining = $winLic.GracePeriodRemaining
+    }
+  }
+} else {
+  # No licenses found at all — probably a generic OEM pre-activation or evaluation
+  # Check if there's any product with LicenseStatus=1 as a final check
+  $anyActivated = $allLicenses | Where-Object { $_.LicenseStatus -eq 1 } | Select-Object -First 1
+  if ($anyActivated) {
+    $result.activated = $true
+    $result.licenseStatus = 'Activado'
+    $result.productName = $anyActivated.Name
   }
 }
 
@@ -85,7 +108,7 @@ $result | ConvertTo-Json -Compress
 `
 
   try {
-    const raw = await runPowerShell(script, 10000)
+    const raw = await runPowerShell(script, 15000)
     if (!raw || raw === 'null') return null
     return JSON.parse(raw)
   } catch {
@@ -163,19 +186,6 @@ $result | ConvertTo-Json -Compress
   }
 }
 
-export async function getActivationStatus(): Promise<ActivationStatus> {
-  const [windows, office] = await Promise.allSettled([
-    getWindowsActivationStatus(),
-    getOfficeActivationStatus(),
-  ])
-
-  return {
-    windows: windows.status === 'fulfilled' ? windows.value : null,
-    office: office.status === 'fulfilled' ? office.value : null,
-    error: null,
-  }
-}
-
 async function downloadFile(url: string, timeout = 15000): Promise<string> {
   const https = require('https')
   return new Promise<string>((resolve, reject) => {
@@ -241,9 +251,10 @@ export async function downloadAndRunMAS(target: 'windows' | 'office' | 'both'): 
 
   const arg = argsMap[target]
   const masArgs = arg ? `-el -qedit ${arg}` : '-el -qedit'
+  const escapedPath = filePath.replace(/\\/g, '\\\\')
   const psScript = `
 try {
-  $p = Start-Process -FilePath "$env:SystemRoot\\system32\\cmd.exe" -ArgumentList '/c """"${filePath.replace(/\\/g, '\\\\')}"" ${masArgs}""' -Wait -Verb RunAs -PassThru -ErrorAction Stop
+  $p = Start-Process -FilePath "$env:SystemRoot\\system32\\cmd.exe" -ArgumentList '/c ""${escapedPath}"" ${masArgs}' -Wait -Verb RunAs -PassThru -ErrorAction Stop
   Write-Output "EXIT:$($p.ExitCode)"
 } catch {
   Write-Output "ERROR:$($_.Exception.Message)"

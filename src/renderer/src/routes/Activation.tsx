@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   ShieldCheck,
@@ -7,10 +7,10 @@ import {
   AlertTriangle,
   CheckCircle,
   XCircle,
-  ChevronDown,
   ExternalLink,
   Info,
   Download,
+  RefreshCw,
 } from 'lucide-react'
 import { useIpc } from '../hooks/useIpc'
 import { IPC_CHANNELS } from '../../../shared/constants/ipc-channels'
@@ -20,12 +20,16 @@ import type { WindowsActivationStatus, OfficeActivationStatus, MASProgress } fro
 function WindowsCard({
   status,
   loading,
+  refreshing,
   onActivate,
+  onRefresh,
   activating,
 }: {
   status: WindowsActivationStatus | null
   loading: boolean
+  refreshing: boolean
   onActivate: () => void
+  onRefresh: () => void
   activating: boolean
 }) {
   const isActivated = status?.activated
@@ -50,18 +54,20 @@ function WindowsCard({
               <p className="text-xs text-neutral-500">Estado de activación</p>
             </div>
           </div>
-          {loading ? (
-            <Loader2 className="w-5 h-5 animate-spin text-neutral-400" />
-          ) : (
-            <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold ${
-              isActivated ? 'bg-success/10 text-success' : 'bg-danger/10 text-danger'
-            }`}>
-              {isActivated ? 'Activado' : 'No activado'}
-            </span>
-          )}
+          <div className="flex items-center gap-2">
+            {loading || refreshing ? (
+              <Loader2 className="w-5 h-5 animate-spin text-neutral-400" />
+            ) : (
+              <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold ${
+                isActivated ? 'bg-success/10 text-success' : 'bg-danger/10 text-danger'
+              }`}>
+                {isActivated ? 'Activado' : 'No activado'}
+              </span>
+            )}
+          </div>
         </div>
 
-        {!loading && status && (
+        {!loading && !refreshing && status && (
           <div className="space-y-2.5">
             <InfoRow label="Edición" value={status.edition || '—'} />
             <InfoRow label="Producto" value={status.productName || '—'} />
@@ -78,13 +84,29 @@ function WindowsCard({
           </div>
         )}
 
-        {!loading && !status && (
+        {!loading && !refreshing && !status && (
           <p className="text-sm text-neutral-400 italic">No se pudo obtener información de activación.</p>
+        )}
+
+        {refreshing && (
+          <div className="flex items-center gap-2 py-2">
+            <Loader2 className="w-4 h-4 animate-spin text-primary-500" />
+            <span className="text-xs text-primary-500 font-medium">Refrescando...</span>
+          </div>
         )}
       </div>
 
-      {!isActivated && !loading && (
-        <div className="px-6 pb-6">
+      <div className="px-6 pb-6 flex gap-2">
+        <button
+          onClick={onRefresh}
+          disabled={loading || refreshing}
+          className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium text-neutral-500 hover:text-primary-600 hover:bg-primary-50 border border-neutral-200 transition-colors disabled:opacity-50"
+          title="Refrescar estado"
+        >
+          <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} />
+          Refrescar
+        </button>
+        {!isActivated && !loading && !refreshing && (
           <Button
             fullWidth
             loading={activating}
@@ -93,8 +115,8 @@ function WindowsCard({
           >
             Activar Windows
           </Button>
-        </div>
-      )}
+        )}
+      </div>
     </motion.div>
   )
 }
@@ -102,12 +124,16 @@ function WindowsCard({
 function OfficeCard({
   status,
   loading,
+  refreshing,
   onActivate,
+  onRefresh,
   activating,
 }: {
   status: OfficeActivationStatus | null
   loading: boolean
+  refreshing: boolean
   onActivate: () => void
+  onRefresh: () => void
   activating: boolean
 }) {
   if (!status?.installed) {
@@ -133,6 +159,17 @@ function OfficeCard({
             </span>
           </div>
           <p className="text-sm text-neutral-400 italic">No se detectó una instalación de Office.</p>
+        </div>
+        <div className="px-6 pb-6">
+          <button
+            onClick={onRefresh}
+            disabled={loading || refreshing}
+            className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium text-neutral-500 hover:text-primary-600 hover:bg-primary-50 border border-neutral-200 transition-colors disabled:opacity-50"
+            title="Refrescar estado"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} />
+            Refrescar
+          </button>
         </div>
       </motion.div>
     )
@@ -160,18 +197,20 @@ function OfficeCard({
               <p className="text-xs text-neutral-500">Estado de activación</p>
             </div>
           </div>
-          {loading ? (
-            <Loader2 className="w-5 h-5 animate-spin text-neutral-400" />
-          ) : (
-            <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold ${
-              isActivated ? 'bg-success/10 text-success' : 'bg-warning/10 text-warning'
-            }`}>
-              {isActivated ? 'Activado' : 'No activado'}
-            </span>
-          )}
+          <div className="flex items-center gap-2">
+            {loading || refreshing ? (
+              <Loader2 className="w-5 h-5 animate-spin text-neutral-400" />
+            ) : (
+              <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold ${
+                isActivated ? 'bg-success/10 text-success' : 'bg-warning/10 text-warning'
+              }`}>
+                {isActivated ? 'Activado' : 'No activado'}
+              </span>
+            )}
+          </div>
         </div>
 
-        {!loading && (
+        {!loading && !refreshing && (
           <div className="space-y-2.5">
             <InfoRow label="Versión" value={status.version || '—'} />
             {status.productName && <InfoRow label="Producto" value={status.productName} />}
@@ -179,10 +218,26 @@ function OfficeCard({
             {status.licenseStatus && <InfoRow label="Estado de licencia" value={status.licenseStatus} />}
           </div>
         )}
+
+        {refreshing && (
+          <div className="flex items-center gap-2 py-2">
+            <Loader2 className="w-4 h-4 animate-spin text-primary-500" />
+            <span className="text-xs text-primary-500 font-medium">Refrescando...</span>
+          </div>
+        )}
       </div>
 
-      {!isActivated && (
-        <div className="px-6 pb-6">
+      <div className="px-6 pb-6 flex gap-2">
+        <button
+          onClick={onRefresh}
+          disabled={loading || refreshing}
+          className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium text-neutral-500 hover:text-primary-600 hover:bg-primary-50 border border-neutral-200 transition-colors disabled:opacity-50"
+          title="Refrescar estado"
+        >
+          <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} />
+          Refrescar
+        </button>
+        {!isActivated && (
           <Button
             fullWidth
             variant="secondary"
@@ -192,8 +247,8 @@ function OfficeCard({
           >
             Activar Office
           </Button>
-        </div>
-      )}
+        )}
+      </div>
     </motion.div>
   )
 }
@@ -255,22 +310,6 @@ function ProgressModal({ progress, onClose }: { progress: MASProgress | null; on
             className={`h-full rounded-full ${isError ? 'bg-danger' : isComplete ? 'bg-success' : 'bg-primary-500'}`}
           />
         </div>
-
-        {isComplete && (
-          <div className="bg-success/5 border border-success/10 rounded-xl p-3 mb-4">
-            <p className="text-xs text-success font-medium text-center">
-              El script de activación se ejecutó correctamente.{'\n'}Verifique el estado actualizado arriba.
-            </p>
-          </div>
-        )}
-
-        {isError && (
-          <div className="bg-danger/5 border border-danger/10 rounded-xl p-3 mb-4">
-            <p className="text-xs text-danger font-medium text-center">
-              Ocurrió un error durante la activación.{'\n'}Verifique que ejecute como administrador o que su antivirus no esté bloqueando el proceso.
-            </p>
-          </div>
-        )}
 
         {(isError || isComplete) && (
           <Button fullWidth onClick={onClose}>
@@ -344,15 +383,23 @@ function DisclaimerModal({
   )
 }
 
+function sleep(ms: number) {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
 export function Activation() {
   const { invoke, on } = useIpc()
   const [windowsStatus, setWindowsStatus] = useState<WindowsActivationStatus | null>(null)
   const [officeStatus, setOfficeStatus] = useState<OfficeActivationStatus | null>(null)
   const [loadingWindows, setLoadingWindows] = useState(true)
   const [loadingOffice, setLoadingOffice] = useState(true)
+  const [refreshingWindows, setRefreshingWindows] = useState(false)
+  const [refreshingOffice, setRefreshingOffice] = useState(false)
   const [activating, setActivating] = useState<'windows' | 'office' | null>(null)
   const [masProgress, setMasProgress] = useState<MASProgress | null>(null)
   const [showDisclaimer, setShowDisclaimer] = useState<'windows' | 'office' | null>(null)
+  const refreshCountRef = useRef(0)
+  const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const loadStatus = useCallback(async () => {
     setLoadingWindows(true)
@@ -371,6 +418,67 @@ export function Activation() {
     }
   }, [invoke])
 
+  const refreshWithRetry = useCallback(async (maxAttempts = 5) => {
+    refreshCountRef.current = 0
+    setRefreshingWindows(true)
+    setRefreshingOffice(true)
+
+    const attempt = async (): Promise<boolean> => {
+      refreshCountRef.current++
+      let winActivated = false
+      let offStatus: OfficeActivationStatus | null = null
+
+      try {
+        const [win, off] = await Promise.all([
+          invoke(IPC_CHANNELS.ACTIVATION_GET_WINDOWS),
+          invoke(IPC_CHANNELS.ACTIVATION_GET_OFFICE),
+        ])
+        if (win) {
+          setWindowsStatus(win as WindowsActivationStatus)
+          winActivated = (win as WindowsActivationStatus).activated
+        }
+        if (off) {
+          setOfficeStatus(off as OfficeActivationStatus)
+          offStatus = off as OfficeActivationStatus
+        }
+      } catch {
+        return false
+      }
+
+      return winActivated
+    }
+
+    const result = await attempt()
+    if (result) {
+      setRefreshingWindows(false)
+      setRefreshingOffice(false)
+      return
+    }
+
+    if (refreshCountRef.current < maxAttempts) {
+      await sleep(2000)
+      await attempt()
+    }
+
+    if (refreshCountRef.current < maxAttempts) {
+      await sleep(2000)
+      await attempt()
+    }
+
+    if (refreshCountRef.current < maxAttempts) {
+      await sleep(2000)
+      await attempt()
+    }
+
+    if (refreshCountRef.current < maxAttempts) {
+      await sleep(2000)
+      await attempt()
+    }
+
+    setRefreshingWindows(false)
+    setRefreshingOffice(false)
+  }, [invoke])
+
   useEffect(() => {
     loadStatus()
   }, [loadStatus])
@@ -381,6 +489,12 @@ export function Activation() {
     })
     return () => { remove?.() }
   }, [on])
+
+  useEffect(() => {
+    return () => {
+      if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current)
+    }
+  }, [])
 
   const handleActivate = async (target: 'windows' | 'office') => {
     setShowDisclaimer(target)
@@ -409,9 +523,19 @@ export function Activation() {
     }
   }
 
-  const handleProgressClose = () => {
+  const handleProgressClose = async () => {
     setMasProgress(null)
-    loadStatus()
+    const wasComplete = masProgress?.stage === 'COMPLETE'
+    if (wasComplete) {
+      refreshWithRetry()
+    } else {
+      loadStatus()
+    }
+  }
+
+  const handleRefresh = () => {
+    if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current)
+    refreshWithRetry()
   }
 
   return (
@@ -431,13 +555,17 @@ export function Activation() {
         <WindowsCard
           status={windowsStatus}
           loading={loadingWindows}
+          refreshing={refreshingWindows}
           onActivate={() => handleActivate('windows')}
+          onRefresh={handleRefresh}
           activating={activating === 'windows'}
         />
         <OfficeCard
           status={officeStatus}
           loading={loadingOffice}
+          refreshing={refreshingOffice}
           onActivate={() => handleActivate('office')}
+          onRefresh={handleRefresh}
           activating={activating === 'office'}
         />
       </div>
