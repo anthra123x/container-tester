@@ -67,6 +67,13 @@ export const IPC_CHANNELS = {
   DRIVERS_CHECK_UPDATES: 'drivers:check-updates',
   DRIVERS_INSTALL_UPDATES: 'drivers:install-updates',
   DRIVERS_PROGRESS: 'drivers:progress',
+
+  // Repair tools
+  REPAIR_RUN: 'repair:run',
+  REPAIR_PROGRESS: 'repair:progress',
+
+  // Report
+  REPORT_GENERATE: 'report:generate',
 } as const
 
 export type IpcChannel = (typeof IPC_CHANNELS)[keyof typeof IPC_CHANNELS]

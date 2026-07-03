@@ -6,6 +6,8 @@ import { registerSettingsIpcHandlers } from './settings.ipc'
 import { registerLiveDataIPC } from './live-data.ipc'
 import { registerActivationIpcHandlers } from './activation.ipc'
 import { registerDriversIpcHandlers } from './drivers.ipc'
+import { registerRepairIpcHandlers } from './repair.ipc'
+import { registerReportIpcHandlers } from './report.ipc'
 
 export function registerAllIpcHandlers(): void {
   registerSystemIpcHandlers()
@@ -16,4 +18,6 @@ export function registerAllIpcHandlers(): void {
   registerLiveDataIPC()
   registerActivationIpcHandlers()
   registerDriversIpcHandlers()
+  registerRepairIpcHandlers()
+  registerReportIpcHandlers()
 }

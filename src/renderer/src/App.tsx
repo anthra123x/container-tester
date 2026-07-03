@@ -23,6 +23,8 @@ import { Loader2 } from 'lucide-react'
 const Benchmark = lazy(() => import('./routes/Benchmark').then(m => ({ default: m.Benchmark })))
 const Activation = lazy(() => import('./routes/Activation').then(m => ({ default: m.Activation })))
 const Drivers = lazy(() => import('./routes/Drivers').then(m => ({ default: m.Drivers })))
+const RepairTools = lazy(() => import('./routes/RepairTools').then(m => ({ default: m.RepairTools })))
+const PerformanceMonitor = lazy(() => import('./routes/PerformanceMonitor').then(m => ({ default: m.PerformanceMonitor })))
 
 function PageFallback() {
   return (
@@ -77,8 +79,10 @@ export default function App() {
             <Route path="/diagnostic/manual/bluetooth" element={<AnimatedPage><BluetoothTest /></AnimatedPage>} />
             <Route path="/diagnostic/manual/usb" element={<AnimatedPage><USBTest /></AnimatedPage>} />
             <Route path="/benchmark" element={<AnimatedPage><Suspense fallback={<PageFallback />}><Benchmark /></Suspense></AnimatedPage>} />
+            <Route path="/performance" element={<AnimatedPage><Suspense fallback={<PageFallback />}><PerformanceMonitor /></Suspense></AnimatedPage>} />
             <Route path="/activation" element={<AnimatedPage><Suspense fallback={<PageFallback />}><Activation /></Suspense></AnimatedPage>} />
             <Route path="/drivers" element={<AnimatedPage><Suspense fallback={<PageFallback />}><Drivers /></Suspense></AnimatedPage>} />
+            <Route path="/repair" element={<AnimatedPage><Suspense fallback={<PageFallback />}><RepairTools /></Suspense></AnimatedPage>} />
             <Route path="/settings" element={<AnimatedPage><Settings /></AnimatedPage>} />
           </Route>
         </Routes>

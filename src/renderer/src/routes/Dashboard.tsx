@@ -11,13 +11,20 @@ import {
   ArrowRight,
   Shield,
   Gauge,
+  FileDown,
+  Loader2,
+  CheckCircle2,
+  AlertCircle,
 } from 'lucide-react'
 import { useDiagnosticStore } from '../stores/diagnostic.store'
 import { MetricCard } from '../components/diagnostic/MetricCard'
 import { Button } from '../components/shared/Button'
 import { useSystemInfo } from '../hooks/useSystemInfo'
 import { useLiveMetrics } from '../hooks/useLiveMetrics'
-import { useMemo } from 'react'
+import { useIpc } from '../hooks/useIpc'
+import { IPC_CHANNELS } from '../../../shared/constants/ipc-channels'
+import { useMemo, useState, useCallback } from 'react'
+import type { ReportData, ReportSectionItem } from '../../../shared/types/report.types'
 
 function formatBytes(bytes: number): string {
   if (!bytes) return '—'
@@ -110,6 +117,58 @@ export function Dashboard() {
     : 'danger'
 
   const statusColors = { success: 'bg-success/10 text-success border-success/20', warning: 'bg-warning/10 text-warning border-warning/20', danger: 'bg-danger/10 text-danger border-danger/20' }
+  const { invoke } = useIpc()
+  const [exporting, setExporting] = useState(false)
+  const [exportResult, setExportResult] = useState<'success' | 'error' | null>(null)
+
+  const handleExport = useCallback(async () => {
+    setExporting(true)
+    setExportResult(null)
+    try {
+      const results: ReportSectionItem[] = []
+      if (currentDiagnostic) {
+        for (const r of currentDiagnostic.results) {
+          results.push({
+            name: r.testName,
+            value: r.value || '—',
+            status: r.status === 'PASS' ? 'PASS' : r.status === 'FAIL' ? 'FAIL' : r.status === 'WARN' ? 'WARN' : 'SKIP',
+          })
+        }
+      }
+
+      const data: ReportData = {
+        deviceName: systemInfo?.hostname || 'Desconocido',
+        model: systemInfo?.model || '—',
+        serialNumber: systemInfo?.serial || '—',
+        manufacturer: systemInfo?.manufacturer || '—',
+        osInfo: systemInfo?.os || '—',
+        diagnosticDate: currentDiagnostic?.completedAt || new Date().toISOString(),
+        technician: '',
+        status: currentDiagnostic?.status || 'NO_APROBADO',
+        hardwareResults: results.filter(r => ['CPU', 'GPU', 'RAM', 'Board', 'BIOS'].some(k => r.name.includes(k))),
+        storageResults: results.filter(r => r.name.includes('Disco') || r.name.includes('SMART')),
+        batteryResults: results.filter(r => r.name.includes('Bater')),
+        manualTestResults: currentDiagnostic?.manualTests?.map(m => ({
+          name: m.testType,
+          value: m.details ? JSON.stringify(m.details) : '—',
+          status: m.result === 'PASS' ? 'PASS' : m.result === 'FAIL' ? 'FAIL' : m.result === 'WARN' ? 'WARN' : 'SKIP',
+        })) || [],
+        observations: currentDiagnostic?.observations || '',
+      }
+
+      const result = await invoke(IPC_CHANNELS.REPORT_GENERATE, data)
+      if (result?.success) {
+        setExportResult('success')
+      } else {
+        setExportResult('error')
+      }
+    } catch {
+      setExportResult('error')
+    } finally {
+      setExporting(false)
+      setTimeout(() => setExportResult(null), 4000)
+    }
+  }, [invoke, systemInfo, currentDiagnostic])
 
   return (
     <div className="max-w-6xl mx-auto">
@@ -168,6 +227,27 @@ export function Dashboard() {
           >
             Ejecutar Benchmark
           </Button>
+          <Button
+            size="lg"
+            variant="outline"
+            icon={exporting ? <Loader2 className="w-5 h-5 animate-spin" /> : <FileDown className="w-5 h-5" />}
+            onClick={handleExport}
+            disabled={exporting}
+          >
+            {exporting ? 'Generando...' : 'Exportar Reporte'}
+          </Button>
+          {exportResult === 'success' && (
+            <div className="flex items-center gap-2 text-sm text-success bg-success/10 px-4 py-2 rounded-lg">
+              <CheckCircle2 className="w-4 h-4" />
+              Reporte guardado
+            </div>
+          )}
+          {exportResult === 'error' && (
+            <div className="flex items-center gap-2 text-sm text-danger bg-danger/10 px-4 py-2 rounded-lg">
+              <AlertCircle className="w-4 h-4" />
+              Error al guardar
+            </div>
+          )}
         </motion.div>
 
         {currentDiagnostic && (
