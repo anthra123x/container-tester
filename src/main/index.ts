@@ -1,7 +1,22 @@
 import { app, BrowserWindow, shell } from 'electron'
 import { join } from 'path'
 import { mkdir } from 'fs/promises'
+import { execFileSync, spawn } from 'child_process'
 import { registerAllIpcHandlers } from './ipc'
+
+// ── Auto-elevation on Windows ──────────────────────────────────
+// Checks if running as admin and restarts elevated if not
+if (process.platform === 'win32' && app.isPackaged) {
+  try {
+    execFileSync('net', ['session'], { timeout: 2000, stdio: 'ignore' })
+  } catch {
+    spawn('powershell.exe', [
+      '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command',
+      `Start-Process -FilePath "${process.execPath}" -Verb RunAs`,
+    ], { detached: true, stdio: 'ignore' })
+    process.exit(0)
+  }
+}
 
 let mainWindow: BrowserWindow | null = null
 

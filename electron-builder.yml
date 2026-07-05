@@ -1,5 +1,6 @@
 appId: com.container.diagnosticsuite
 productName: Container Diagnostic Suite
+copyright: Copyright © 2025 Container Diagnostic Suite
 directories:
   output: dist
 asar: true
@@ -7,5 +8,14 @@ compression: normal
 win:
   target:
     - portable
+    - nsis
   icon: resources/icons/icon.ico
-  artifactName: "CDS-Portable-${version}.exe"
+  artifactName: "CDS-${version}-${arch}.${ext}"
+nsis:
+  oneClick: false
+  perMachine: true
+  runAfterFinish: true
+  createDesktopShortcut: true
+  installerIcon: resources/icons/icon.ico
+  installerHeaderIcon: resources/icons/icon.ico
+  shortcutName: Container Diagnostic Suite

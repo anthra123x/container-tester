@@ -26,6 +26,7 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
 }
 
 export interface LiveMetrics {
+  restricted: boolean
   cpu: { usage: number; temperature: number | null; speed: number }
   ram: { total: number; used: number; free: number; usagePercent: number }
   storage: { usagePercent: number; freeGB: number; totalGB: number }
@@ -65,7 +66,12 @@ export async function getLiveMetrics(): Promise<LiveMetrics> {
 
   const uptimeSec = t?.uptime ?? 0
 
+  const coreResults = [currentLoad, mem, cpuTemp, cpu, fsSize, time]
+  const anySuccess = coreResults.some(r => r.status === 'fulfilled')
+  const restricted = !anySuccess
+
   return {
+    restricted,
     cpu: {
       usage: cl?.currentLoad != null ? Math.round(cl.currentLoad * 10) / 10 : 0,
       temperature: temp?.main ?? null,

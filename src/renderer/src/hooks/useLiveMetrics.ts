@@ -3,6 +3,7 @@ import { useIpc } from './useIpc'
 import { IPC_CHANNELS } from '../../../shared/constants/ipc-channels'
 
 export interface LiveMetrics {
+  restricted: boolean
   cpu: { usage: number; temperature: number | null; speed: number }
   ram: { total: number; used: number; free: number; usagePercent: number }
   storage: { usagePercent: number; freeGB: number; totalGB: number }
@@ -17,6 +18,7 @@ export interface LiveMetrics {
 }
 
 const emptyMetrics: LiveMetrics = {
+  restricted: false,
   cpu: { usage: 0, temperature: null, speed: 0 },
   ram: { total: 0, used: 0, free: 0, usagePercent: 0 },
   storage: { usagePercent: 0, freeGB: 0, totalGB: 0 },
@@ -27,6 +29,7 @@ const emptyMetrics: LiveMetrics = {
 export function useLiveMetrics(intervalMs = 3000) {
   const [metrics, setMetrics] = useState<LiveMetrics>(emptyMetrics)
   const [connected, setConnected] = useState(false)
+  const [restricted, setRestricted] = useState(false)
   const { invoke } = useIpc()
   const mountedRef = useRef(true)
   const hiddenRef = useRef(false)
@@ -50,6 +53,7 @@ export function useLiveMetrics(intervalMs = 3000) {
         if (data && mountedRef.current) {
           setMetrics(data)
           setConnected(true)
+          setRestricted(data.restricted || false)
         }
       } catch {
         if (mountedRef.current) {
@@ -67,5 +71,5 @@ export function useLiveMetrics(intervalMs = 3000) {
     }
   }, [intervalMs, invoke])
 
-  return { metrics, connected }
+  return { metrics, connected, restricted }
 }

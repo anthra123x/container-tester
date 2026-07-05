@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
 import { motion } from 'framer-motion'
-import { Activity, Cpu, MemoryStick, HardDrive, Thermometer, Clock } from 'lucide-react'
+import { Activity, Cpu, MemoryStick, HardDrive, Thermometer, Clock, AlertTriangle } from 'lucide-react'
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, ReferenceLine,
 } from 'recharts'
@@ -15,7 +15,7 @@ interface ChartPoint {
 }
 
 function useLiveMetricsHistory(maxSamples = 60) {
-  const { metrics, connected } = useLiveMetrics(5000)
+  const { metrics, connected, restricted } = useLiveMetrics(5000)
   const [history, setHistory] = useState<ChartPoint[]>([])
 
   useEffect(() => {
@@ -34,7 +34,7 @@ function useLiveMetricsHistory(maxSamples = 60) {
     })
   }, [metrics, maxSamples])
 
-  return { history, connected }
+  return { history, connected, restricted }
 }
 
 function ChartCard({
@@ -121,7 +121,7 @@ function ChartCard({
 }
 
 export function PerformanceMonitor() {
-  const { history, connected } = useLiveMetricsHistory(60)
+  const { history, connected, restricted } = useLiveMetricsHistory(60)
 
   const cpuAvg = useMemo(() => {
     if (history.length === 0) return 0
@@ -150,7 +150,22 @@ export function PerformanceMonitor() {
         </p>
       </div>
 
-      {!connected && (
+      {restricted && (
+        <div className="bg-danger/5 border border-danger/10 rounded-xl p-4 flex items-start gap-3">
+          <div className="p-2 rounded-lg bg-danger/10 shrink-0">
+            <AlertTriangle className="w-4 h-4 text-danger" />
+          </div>
+          <div>
+            <h4 className="text-sm font-bold text-primary-900 mb-0.5">Permisos insuficientes</h4>
+            <p className="text-xs text-neutral-600">
+              No se pueden obtener las métricas del sistema. La aplicación necesita ejecutarse como administrador.
+              Cierre y reinicie la aplicación con permisos elevados.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {!connected && !restricted && (
         <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm text-amber-800">
           No se pueden obtener métricas en vivo en este momento
         </div>
