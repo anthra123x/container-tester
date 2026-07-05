@@ -1,5 +1,6 @@
 import si from 'systeminformation'
 import { runPowerShellWithRetry } from './powershell'
+import { cached } from './service-cache'
 import type { SystemInfo, CPUInfo, RAMInfo, GPUInfo, MotherboardInfo, RAMSlot } from '../../shared/types/hardware.types'
 
 const SI_TIMEOUT = 8000
@@ -104,7 +105,7 @@ async function getUptime(): Promise<{ seconds: number; days: number; hours: numb
   }
 }
 
-export async function getSystemInfo(): Promise<SystemInfo> {
+async function fetchSystemInfo(): Promise<SystemInfo> {
   const [system, os, motherboard, activated, edition, secureBoot, tpm, virt, powerPlan, uptime] = await Promise.allSettled([
     withTimeout(si.system(), SI_TIMEOUT, 'system'),
     withTimeout(si.osInfo(), SI_TIMEOUT, 'osInfo'),
@@ -148,6 +149,10 @@ export async function getSystemInfo(): Promise<SystemInfo> {
   }
 }
 
+export async function getSystemInfo(): Promise<SystemInfo> {
+  return cached('system:info', 30000, fetchSystemInfo)
+}
+
 export async function getMotherboardInfo(): Promise<MotherboardInfo> {
   const [system, bios] = await Promise.allSettled([
     si.system(),
@@ -167,7 +172,7 @@ export async function getMotherboardInfo(): Promise<MotherboardInfo> {
   }
 }
 
-export async function getCPUInfo(): Promise<CPUInfo> {
+async function fetchCPUInfo(): Promise<CPUInfo> {
   const [cpu, currentLoad] = await Promise.allSettled([
     withTimeout(si.cpu(), SI_TIMEOUT, 'cpu'),
     withTimeout(si.currentLoad(), SI_TIMEOUT, 'currentLoad')
@@ -210,7 +215,11 @@ export async function getCPUInfo(): Promise<CPUInfo> {
   }
 }
 
-export async function getRAMInfo(): Promise<RAMInfo> {
+export async function getCPUInfo(): Promise<CPUInfo> {
+  return cached('system:cpu', 30000, fetchCPUInfo)
+}
+
+async function fetchRAMInfo(): Promise<RAMInfo> {
   const [mem, memLayout] = await Promise.allSettled([
     withTimeout(si.mem(), SI_TIMEOUT, 'mem'),
     withTimeout(si.memLayout(), SI_TIMEOUT, 'memLayout')
@@ -242,7 +251,11 @@ export async function getRAMInfo(): Promise<RAMInfo> {
   }
 }
 
-export async function getGPUInfo(): Promise<GPUInfo> {
+export async function getRAMInfo(): Promise<RAMInfo> {
+  return cached('system:ram', 30000, fetchRAMInfo)
+}
+
+async function fetchGPUInfo(): Promise<GPUInfo> {
   const graphics = await withTimeout(si.graphics(), SI_TIMEOUT, 'graphics').catch(() => ({ controllers: [] }))
 
   if (!graphics.controllers?.length) {
@@ -264,4 +277,8 @@ export async function getGPUInfo(): Promise<GPUInfo> {
     fanSpeed: primary.fanSpeed ?? null,
     driverDate: primary.driverDate ?? null,
   }
+}
+
+export async function getGPUInfo(): Promise<GPUInfo> {
+  return cached('system:gpu', 30000, fetchGPUInfo)
 }

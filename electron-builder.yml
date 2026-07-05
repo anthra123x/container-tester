@@ -1,9 +1,10 @@
 appId: com.container.diagnosticsuite
 productName: Container Diagnostic Suite
+copyright: Copyright © 2025 Container Diagnostic Suite
 directories:
   output: dist
 asar: true
-compression: normal
+compression: maximum
 win:
   target:
     - portable

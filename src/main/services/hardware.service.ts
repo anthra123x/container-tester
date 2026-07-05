@@ -39,32 +39,39 @@ export interface GPUDetail {
 }
 
 export async function getCPUDetail(): Promise<CPUDetail> {
-  const [cpu, currentLoad, cpuTemp] = await Promise.all([
+  const [cpu, currentLoad, cpuTemp] = await Promise.allSettled([
     si.cpu(),
     si.currentLoad(),
     si.cpuTemperature()
   ])
 
+  const cpuVal = cpu.status === 'fulfilled' ? cpu.value : { manufacturer: '', brand: '', cores: 0, physicalCores: 0, speed: 0, speedMax: 0, voltage: null }
+  const loadVal = currentLoad.status === 'fulfilled' ? currentLoad.value : { currentLoad: 0 }
+  const tempVal = cpuTemp.status === 'fulfilled' ? cpuTemp.value : { main: null }
+
   return {
-    manufacturer: cpu.manufacturer,
-    brand: cpu.brand,
-    cores: cpu.cores,
-    physicalCores: cpu.physicalCores,
-    speed: cpu.speed,
-    speedMax: cpu.speedMax,
-    usage: Math.round(currentLoad.currentLoad * 100) / 100,
-    voltage: cpu.voltage ? parseFloat(cpu.voltage) : null,
-    temperature: cpuTemp.main ?? null
+    manufacturer: cpuVal.manufacturer,
+    brand: cpuVal.brand,
+    cores: cpuVal.cores,
+    physicalCores: cpuVal.physicalCores,
+    speed: cpuVal.speed,
+    speedMax: cpuVal.speedMax,
+    usage: Math.round(loadVal.currentLoad * 100) / 100,
+    voltage: cpuVal.voltage ? parseFloat(cpuVal.voltage) : null,
+    temperature: tempVal.main ?? null
   }
 }
 
 export async function getRAMDetail(): Promise<RAMDetail> {
-  const [mem, memLayout] = await Promise.all([
+  const [mem, memLayout] = await Promise.allSettled([
     si.mem(),
     si.memLayout()
   ])
 
-  const slots: RAMSlot[] = memLayout.map((slot, index) => ({
+  const memVal = mem.status === 'fulfilled' ? mem.value : { total: 1, used: 0, available: 0 }
+  const layoutVal = memLayout.status === 'fulfilled' ? memLayout.value : []
+
+  const slots: RAMSlot[] = layoutVal.map((slot, index) => ({
     slot: `Slot ${index + 1}`,
     type: slot.type || 'Unknown',
     sizeGB: Math.round((slot.size / (1024 * 1024 * 1024)) * 100) / 100,
@@ -74,16 +81,16 @@ export async function getRAMDetail(): Promise<RAMDetail> {
   }))
 
   return {
-    totalGB: Math.round((mem.total / (1024 * 1024 * 1024)) * 100) / 100,
-    usedGB: Math.round((mem.used / (1024 * 1024 * 1024)) * 100) / 100,
-    availableGB: Math.round((mem.available / (1024 * 1024 * 1024)) * 100) / 100,
-    usagePercent: Math.round(mem.used / mem.total * 10000) / 100,
+    totalGB: Math.round((memVal.total / (1024 * 1024 * 1024)) * 100) / 100,
+    usedGB: Math.round((memVal.used / (1024 * 1024 * 1024)) * 100) / 100,
+    availableGB: Math.round((memVal.available / (1024 * 1024 * 1024)) * 100) / 100,
+    usagePercent: Math.round(memVal.used / memVal.total * 10000) / 100,
     slots
   }
 }
 
 export async function getGPUDetail(): Promise<GPUDetail> {
-  const graphics = await si.graphics()
+  const graphics = await si.graphics().catch(() => ({ controllers: [] }))
 
   if (!graphics.controllers || graphics.controllers.length === 0) {
     return {

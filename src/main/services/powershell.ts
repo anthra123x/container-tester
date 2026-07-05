@@ -31,7 +31,7 @@ export async function runPowerShellWithRetry<T>(
         return parser(raw)
       }
     } catch {
-      if (attempt < retries) await sleep(200)
+      if (attempt < retries) await sleep(attempt === 1 ? 1000 : 500)
     }
   }
   return null

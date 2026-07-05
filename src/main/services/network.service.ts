@@ -1,4 +1,5 @@
 import si from 'systeminformation'
+import { cached } from './service-cache'
 
 const SI_TIMEOUT = 8000
 
@@ -70,7 +71,7 @@ export interface EthernetInterface {
   default: boolean
 }
 
-export async function getWifiInfo(): Promise<WifiInfo> {
+async function fetchWifiInfo(): Promise<WifiInfo> {
   const [networks, interfaces] = await Promise.allSettled([
     withTimeout(si.wifiNetworks(), SI_TIMEOUT, 'wifiNetworks'),
     withTimeout(si.wifiInterfaces(), SI_TIMEOUT, 'wifiInterfaces')
@@ -102,7 +103,11 @@ export async function getWifiInfo(): Promise<WifiInfo> {
   }
 }
 
-export async function getBluetoothInfo(): Promise<BluetoothInfo> {
+export async function getWifiInfo(): Promise<WifiInfo> {
+  return cached('network:wifi', 30000, fetchWifiInfo)
+}
+
+async function fetchBluetoothInfo(): Promise<BluetoothInfo> {
   const btDevices = await withTimeout(si.bluetoothDevices(), SI_TIMEOUT, 'bluetoothDevices').catch(() => [])
 
   return {
@@ -118,7 +123,11 @@ export async function getBluetoothInfo(): Promise<BluetoothInfo> {
   }
 }
 
-export async function getEthernetInfo(): Promise<EthernetInfo> {
+export async function getBluetoothInfo(): Promise<BluetoothInfo> {
+  return cached('network:bluetooth', 30000, fetchBluetoothInfo)
+}
+
+async function fetchEthernetInfo(): Promise<EthernetInfo> {
   const networkInterfaces = await withTimeout(si.networkInterfaces(), SI_TIMEOUT, 'networkInterfaces').catch(() => [])
 
   return {
@@ -139,4 +148,8 @@ export async function getEthernetInfo(): Promise<EthernetInfo> {
         default: ni.default || false
       }))
   }
+}
+
+export async function getEthernetInfo(): Promise<EthernetInfo> {
+  return cached('network:ethernet', 30000, fetchEthernetInfo)
 }

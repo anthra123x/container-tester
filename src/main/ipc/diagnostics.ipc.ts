@@ -576,72 +576,93 @@ async function runNetworkPhase(): Promise<AutoDiagnosticPhase> {
 
     const hasUpInterface = nets.some(n => n.operstate === 'up' && n.type !== 'virtual')
 
-    const pingResult = await runPowerShellWithRetry<string>(
-      '$r = Test-Connection -ComputerName 8.8.8.8 -Count 2 -Quiet -ErrorAction SilentlyContinue; if ($r -eq $true) { Write-Output "OK" } else { Write-Output "FAIL" }',
-      (r) => r, 1, 10000
-    )
-    if (pingResult) {
-      const pingOk = pingResult.includes('OK') || pingResult.includes('True')
-      results.push(result('net-ping', 'NETWORK', 'Ping a Internet (8.8.8.8)', pingOk ? 'PASS' : 'FAIL',
-          pingOk ? 'Respuesta OK' : 'Sin respuesta',
-          pingOk ? undefined : 'Sin conectividad a Internet. Verifique su conexión de red, cable o WiFi.'))
-
-      if (pingOk) {
-        const pingLatency = await runPowerShellWithRetry<string>(
-          'Test-Connection -ComputerName 8.8.8.8 -Count 2 -ErrorAction SilentlyContinue | Measure-Object -Property ResponseTime -Average | Select-Object -ExpandProperty Average',
-          (r) => r, 1, 10000
-        )
-        if (pingLatency) {
-          const latency = Math.round(parseFloat(String(pingLatency).replace(',', '.')))
-          let latencyStatus: TestStatus = 'PASS'
-          if (latency >= 200) latencyStatus = 'FAIL'
-          else if (latency >= 100) latencyStatus = 'WARN'
-          results.push(result('net-latency', 'NETWORK', 'Latencia promedio', latencyStatus, `${latency} ms`,
-            latencyStatus === 'FAIL' ? 'Latencia de red muy alta (≥200ms). Puede afectar videollamadas y juegos en línea.' : latencyStatus === 'WARN' ? 'Latencia de red elevada (≥100ms).' : undefined))
+    const [pingResult, dnsResult, gwResult, dnsServers, firewall] = await Promise.allSettled([
+      // Ping + latency en un solo script
+      runPowerShellWithRetry<string>(
+        `$r = Test-Connection -ComputerName 8.8.8.8 -Count 2 -ErrorAction SilentlyContinue
+        $result = @{}
+        if ($r -and $r.ResponseTime -ne $null) {
+          $result.ok = $true
+          $times = $r | Where-Object { $_.ResponseTime -ne $null } | Select-Object -ExpandProperty ResponseTime
+          $result.latency = [math]::Round(($times | Measure-Object -Average).Average, 0)
+        } else {
+          $result.ok = $false
+          $result.latency = $null
         }
-      }
+        $result | ConvertTo-Json -Compress`,
+        (r) => r, 1, 10000
+      ),
+      // DNS resolution
+      runPowerShellWithRetry<string>(
+        '$r = Resolve-DnsName -Name google.com -Type A -QuickTimeout -ErrorAction SilentlyContinue; if ($r) { Write-Output "OK" } else { Write-Output "FAIL" }',
+        (r) => r, 1, 10000
+      ),
+      // Gateway
+      runPowerShellWithRetry<string>(
+        'Get-CimInstance Win32_IP4RouteTable -ErrorAction SilentlyContinue | Where-Object { $_.Destination -eq "0.0.0.0" } | Select-Object -First 1 -ExpandProperty NextHop',
+        (r) => r
+      ),
+      // DNS servers
+      runPowerShellWithRetry<string>(
+        'Get-DnsClientServerAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_.ServerAddresses } | Select-Object -First 1 -ExpandProperty ServerAddresses | ConvertTo-Json -Compress',
+        (r) => r
+      ),
+      // Firewall
+      runPowerShellWithRetry<string>(
+        'Get-NetFirewallProfile -ProfileName Domain,Public,Private -ErrorAction SilentlyContinue | Select-Object Name,Enabled | ConvertTo-Json -Compress',
+        (r) => r
+      ),
+    ])
+
+    // Ping + latency
+    if (pingResult.status === 'fulfilled' && pingResult.value) {
+      try {
+        const pingData = JSON.parse(pingResult.value)
+        if (pingData.ok) {
+          results.push(result('net-ping', 'NETWORK', 'Ping a Internet (8.8.8.8)', 'PASS', 'Respuesta OK'))
+          if (pingData.latency != null) {
+            const latency = pingData.latency
+            let latencyStatus: TestStatus = 'PASS'
+            if (latency >= 200) latencyStatus = 'FAIL'
+            else if (latency >= 100) latencyStatus = 'WARN'
+            results.push(result('net-latency', 'NETWORK', 'Latencia promedio', latencyStatus, `${latency} ms`,
+              latencyStatus === 'FAIL' ? 'Latencia de red muy alta (≥200ms). Puede afectar videollamadas y juegos en línea.' : latencyStatus === 'WARN' ? 'Latencia de red elevada (≥100ms).' : undefined))
+          }
+        } else {
+          results.push(result('net-ping', 'NETWORK', 'Ping a Internet (8.8.8.8)', 'FAIL', 'Sin respuesta',
+            'Sin conectividad a Internet. Verifique su conexión de red, cable o WiFi.'))
+        }
+      } catch { }
     }
 
-    const dnsResult = await runPowerShellWithRetry<string>(
-      '$r = Resolve-DnsName -Name google.com -Type A -QuickTimeout -ErrorAction SilentlyContinue; if ($r) { Write-Output "OK" } else { Write-Output "FAIL" }',
-      (r) => r, 1, 10000
-    )
-    if (dnsResult) {
-      const dnsOk = dnsResult.includes('OK') || dnsResult.includes('True')
+    // DNS resolution
+    if (dnsResult.status === 'fulfilled' && dnsResult.value) {
+      const dnsOk = dnsResult.value.includes('OK') || dnsResult.value.includes('True')
       results.push(result('net-dns', 'NETWORK', 'Resolución DNS', dnsOk ? 'PASS' : 'FAIL',
           dnsOk ? 'Funciona (google.com)' : 'Fallo en resolución',
           dnsOk ? undefined : 'La resolución DNS está fallando. Verifique la configuración de red o servidores DNS.'))
     }
 
-    const gwResult = await runPowerShellWithRetry<string>(
-      'Get-CimInstance Win32_IP4RouteTable -ErrorAction SilentlyContinue | Where-Object { $_.Destination -eq "0.0.0.0" } | Select-Object -First 1 -ExpandProperty NextHop',
-      (r) => r
-    )
-    if (gwResult && gwResult !== 'null') {
-      results.push(result('net-gateway', 'NETWORK', 'Puerta de enlace', 'PASS', gwResult))
+    // Gateway
+    if (gwResult.status === 'fulfilled' && gwResult.value && gwResult.value !== 'null') {
+      results.push(result('net-gateway', 'NETWORK', 'Puerta de enlace', 'PASS', gwResult.value))
     }
 
-    const dnsServers = await runPowerShellWithRetry<string>(
-      'Get-DnsClientServerAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_.ServerAddresses } | Select-Object -First 1 -ExpandProperty ServerAddresses | ConvertTo-Json -Compress',
-      (r) => r
-    )
-    if (dnsServers && dnsServers !== 'null') {
+    // DNS servers
+    if (dnsServers.status === 'fulfilled' && dnsServers.value && dnsServers.value !== 'null') {
       try {
-        const servers = JSON.parse(dnsServers)
+        const servers = JSON.parse(dnsServers.value)
         const serverStr = Array.isArray(servers) ? servers.join(', ') : servers
         results.push(result('net-dns-servers', 'NETWORK', 'Servidores DNS configurados', 'PASS', serverStr))
       } catch {
-        results.push(result('net-dns-servers', 'NETWORK', 'Servidores DNS configurados', 'PASS', dnsServers))
+        results.push(result('net-dns-servers', 'NETWORK', 'Servidores DNS configurados', 'PASS', dnsServers.value))
       }
     }
 
-    const firewall = await runPowerShellWithRetry<string>(
-      'Get-NetFirewallProfile -ProfileName Domain,Public,Private -ErrorAction SilentlyContinue | Select-Object Name,Enabled | ConvertTo-Json -Compress',
-      (r) => r
-    )
-    if (firewall && firewall !== 'null') {
+    // Firewall
+    if (firewall.status === 'fulfilled' && firewall.value && firewall.value !== 'null') {
       try {
-        const profiles = JSON.parse(firewall)
+        const profiles = JSON.parse(firewall.value)
         const profilesArr = Array.isArray(profiles) ? profiles : [profiles]
         const profileStrs = profilesArr.map((p: any) => `${p.Name}: ${p.Enabled ? 'Activo' : 'Inactivo'}`).join(' • ')
         results.push(result('net-firewall', 'NETWORK', 'Firewall de Windows', 'PASS', profileStrs))

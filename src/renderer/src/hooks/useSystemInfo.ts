@@ -16,11 +16,12 @@ export function useSystemInfo() {
     setLoading(true)
     setError(null)
     try {
-      const info: SystemInfo | null = await invoke(IPC_CHANNELS.GET_SYSTEM_INFO)
-      setSystemInfo(info)
-      invoke(IPC_CHANNELS.GET_SYSTEM_SPECS).then((specs) => {
-        setSystemSpecs(specs)
-      }).catch(() => {})
+      const [info, specs] = await Promise.all([
+        invoke<SystemInfo | null>(IPC_CHANNELS.GET_SYSTEM_INFO),
+        invoke<unknown>(IPC_CHANNELS.GET_SYSTEM_SPECS).catch(() => null),
+      ])
+      if (info) setSystemInfo(info)
+      if (specs) setSystemSpecs(specs)
     } catch (err: any) {
       setError(err?.message || 'Error obteniendo información del sistema')
     } finally {

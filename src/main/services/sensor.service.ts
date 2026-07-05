@@ -1,5 +1,6 @@
 import si from 'systeminformation'
-import { runPowerShellWithRetry } from './powershell'
+import { runPowerShell } from './powershell'
+import { cached } from './service-cache'
 
 const PS_TIMEOUT = 5000
 const SI_TIMEOUT = 8000
@@ -50,124 +51,84 @@ export interface SensorInfo {
   fans: FanInfo[]
 }
 
-async function getMotherboardSensors(): Promise<{
-  motherboardTemp: number | null; chipsetTemp: number | null; voltageRails: VoltageRail[]
+async function getMotherboardAndFanSensors(): Promise<{
+  motherboardTemp: number | null; chipsetTemp: number | null; voltageRails: VoltageRail[]; fans: FanInfo[]
 }> {
   const script = `
-    $sensors = Get-WmiObject -Namespace root\\wmi -Class MSAcpi_ThermalZoneTemperature -ErrorAction SilentlyContinue
-    if ($sensors) {
-      $temps = @()
-      foreach ($s in $sensors) {
-        $temps += [PSCustomObject]@{
-          Name = $s.InstanceName
-          TempC = [math]::Round(($s.CurrentTemperature - 2731.5) / 10, 1)
-        }
-      }
-      return ($temps | ConvertTo-Json -Compress)
+$result = @{}
+$result.motherboardTemp = $null
+$result.chipsetTemp = $null
+$result.voltageRails = @()
+$result.fans = @()
+
+# Thermal zones
+$zones = Get-WmiObject -Namespace root\\wmi -Class MSAcpi_ThermalZoneTemperature -ErrorAction SilentlyContinue
+$allTemps = @()
+if ($zones) {
+  foreach ($s in $zones) {
+    $tempC = [math]::Round(($s.CurrentTemperature - 2731.5) / 10, 1)
+    $allTemps += @{ Name = "$($s.InstanceName)"; TempC = $tempC }
+    $nameLower = "$($s.InstanceName)".ToLower()
+    if ($nameLower -match "cpu|processor") { $result.chipsetTemp = $tempC }
+    elseif ($nameLower -match "pch|chipset") { $result.chipsetTemp = $tempC }
+    elseif ($result.motherboardTemp -eq $null) { $result.motherboardTemp = $tempC }
+  }
+}
+if ($result.chipsetTemp -eq $null -and $result.motherboardTemp -ne $null) { $result.chipsetTemp = $result.motherboardTemp }
+
+# Fans
+$fans = Get-WmiObject -Namespace root\\wmi -Class MSAcpi_Fan -ErrorAction SilentlyContinue
+if ($fans) {
+  foreach ($f in $fans) {
+    $result.fans += @{
+      Name = "$($f.InstanceName)" -replace '.*\\\\',''
+      RPM = try { [int]$f.FanSpeed } catch { $null }
+      Percentage = try { [int]$f.FanSpeedPercentage } catch { $null }
     }
-    return "[]"
-  `
-  const momboScript = `
-    $voltages = try {
-      Get-WmiObject -Namespace root\\wmi -Class MSAcpi_PowerSource -ErrorAction SilentlyContinue |
-        Select-Object Voltage,RateOfUse | ConvertTo-Json -Compress
-    } catch { "[]" }
-    $voltageRails = @()
-    $regPaths = @(
-      "HKLM:\\HARDWARE\\DESCRIPTION\\System\\BIOS",
-      "HKLM:\\HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\0"
-    )
-    $voltageRails += [PSCustomObject]@{ Name = "Vcore (CPU)"; Voltage = try { (Get-CimInstance Win32_Processor -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty CurrentVoltage) -and 0.1 } catch { $null } }
-    $voltageRails += [PSCustomObject]@{ Name = "+12V"; Voltage = try { (Get-WmiObject -Namespace root\\wmi -Class MSAcpi_PowerSource -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Voltage)/1000 } catch { $null } }
-    $voltageRails += [PSCustomObject]@{ Name = "DRAM"; Voltage = $null }
-    $voltageRails | ConvertTo-Json -Compress
-  `
-  const [mbResult, vrResult] = await Promise.allSettled([
-    runPowerShellWithRetry<string>(script, (r) => r),
-    runPowerShellWithRetry<string>(momboScript, (r) => r)
-  ])
-
-  const mbString = mbResult.status === 'fulfilled' ? mbResult.value : null
-  const vrString = vrResult.status === 'fulfilled' ? vrResult.value : null
-
-  let motherboardTemp: number | null = null
-  let chipsetTemp: number | null = null
-
-  if (mbString && mbString !== '[]') {
-    try {
-      const zones = JSON.parse(mbString)
-      if (Array.isArray(zones)) {
-        for (const z of zones) {
-          const name = (z.Name || '').toLowerCase()
-          if (name.includes('cpu') || name.includes('processor')) {
-            chipsetTemp = z.TempC ?? null
-          } else if (name.includes('pch') || name.includes('chipset')) {
-            chipsetTemp = z.TempC ?? null
-          } else if (motherboardTemp === null) {
-            motherboardTemp = z.TempC ?? null
-          }
-        }
-        if (chipsetTemp === null) {
-          chipsetTemp = motherboardTemp
-        }
-      }
-    } catch { }
   }
-
-  let voltageRails: VoltageRail[] = []
-  if (vrString) {
-    try {
-      const parsed = JSON.parse(vrString)
-      voltageRails = Array.isArray(parsed) ? parsed : []
-    } catch { }
+} else {
+  $cpuFan = Get-WmiObject -Namespace root\\cimv2 -Class Win32_Fan -ErrorAction SilentlyContinue
+  if ($cpuFan) {
+    foreach ($f in $cpuFan) {
+      $result.fans += @{ Name = "$($f.Name)"; RPM = try { [int]$f.DesiredSpeed } catch { $null }; Percentage = $null }
+    }
   }
-
-  return { motherboardTemp, chipsetTemp, voltageRails: voltageRails.filter(r => r.Voltage != null) }
 }
 
-async function getFanSpeeds(): Promise<FanInfo[]> {
-  const script = `
-    $fans = Get-WmiObject -Namespace root\\wmi -Class MSAcpi_Fan -ErrorAction SilentlyContinue
-    if ($fans) {
-      $result = @()
-      foreach ($f in $fans) {
-        $result += [PSCustomObject]@{
-          Name = $f.InstanceName -replace '.*\\\\',''
-          RPM = try { [int]($f.FanSpeed) } catch { $null }
-          Percentage = try { [int]($f.FanSpeedPercentage) } catch { $null }
-        }
-      }
-      return ($result | ConvertTo-Json -Compress)
+# Voltage rails (best-effort, rarely available)
+try {
+  $cpuVoltage = try { [math]::Round((Get-CimInstance Win32_Processor -ErrorAction SilentlyContinue | Select-Object -First 1).CurrentVoltage * 0.1, 2) } catch { $null }
+  if ($cpuVoltage) { $result.voltageRails += @{ Name = "Vcore (CPU)"; Voltage = $cpuVoltage } }
+} catch {}
+
+$result | ConvertTo-Json -Compress -Depth 3
+`
+  const defaults = { motherboardTemp: null, chipsetTemp: null, voltageRails: [] as VoltageRail[], fans: [] as FanInfo[] }
+  try {
+    const raw = await runPowerShell(script, PS_TIMEOUT)
+    if (!raw || raw === 'null') return defaults
+    const parsed = JSON.parse(raw)
+    return {
+      motherboardTemp: parsed.motherboardTemp ?? null,
+      chipsetTemp: parsed.chipsetTemp ?? null,
+      voltageRails: Array.isArray(parsed.voltageRails) ? parsed.voltageRails.filter((r: any) => r.Voltage != null) : [],
+      fans: Array.isArray(parsed.fans) ? parsed.fans : [],
     }
-    $cpuFan = Get-WmiObject -Namespace root\\cimv2 -Class Win32_Fan -ErrorAction SilentlyContinue
-    if ($cpuFan) {
-      $result = @()
-      foreach ($f in $cpuFan) {
-        $result += [PSCustomObject]@{ Name = $f.Name; RPM = try { [int]($f.DesiredSpeed) } catch { $null }; Percentage = $null }
-      }
-      return ($result | ConvertTo-Json -Compress)
-    }
-    return "[]"
-  `
-  const result = await runPowerShellWithRetry<string>(script, (r) => r)
-  if (result && result !== '[]') {
-    try { return JSON.parse(result) } catch { }
+  } catch {
+    return defaults
   }
-  return []
 }
 
-export async function getSensorInfo(): Promise<SensorInfo> {
-  const [cpuTemp, diskLayout, mbSensors, fanSpeeds] = await Promise.allSettled([
+async function fetchSensorInfo(): Promise<SensorInfo> {
+  const [cpuTemp, diskLayout, mbAndFans] = await Promise.allSettled([
     withTimeout(si.cpuTemperature(), SI_TIMEOUT, 'cpuTemperature'),
     withTimeout(si.diskLayout(), SI_TIMEOUT, 'diskLayout'),
-    getMotherboardSensors(),
-    getFanSpeeds()
+    getMotherboardAndFanSensors(),
   ])
 
   const cpuTempVal = cpuTemp.status === 'fulfilled' ? cpuTemp.value : { main: null, cores: [], max: null, package: null }
   const diskLayoutVal = diskLayout.status === 'fulfilled' ? diskLayout.value : []
-  const mbSensorsVal = mbSensors.status === 'fulfilled' ? mbSensors.value : { motherboardTemp: null, chipsetTemp: null, voltageRails: [] }
-  const fanSpeedsVal = fanSpeeds.status === 'fulfilled' ? fanSpeeds.value : []
+  const mfVal = mbAndFans.status === 'fulfilled' ? mbAndFans.value : { motherboardTemp: null, chipsetTemp: null, voltageRails: [], fans: [] }
 
   const storageTemps: { device: string; temperature: number | null }[] = []
   for (const disk of diskLayoutVal) {
@@ -185,21 +146,19 @@ export async function getSensorInfo(): Promise<SensorInfo> {
       packageTemp: cpuTempVal.package ?? null
     },
     gpu: {
-      temperature: null,
-      hotspotTemp: null,
-      memoryTemp: null,
-      coreClock: null,
-      memoryClock: null,
-      fanSpeed: null,
-      fanPercent: null,
-      powerDraw: null
+      temperature: null, hotspotTemp: null, memoryTemp: null,
+      coreClock: null, memoryClock: null, fanSpeed: null, fanPercent: null, powerDraw: null
     },
     storage: storageTemps,
     motherboard: {
-      temp: mbSensorsVal.motherboardTemp,
-      chipsetTemp: mbSensorsVal.chipsetTemp,
-      voltageRails: mbSensorsVal.voltageRails
+      temp: mfVal.motherboardTemp,
+      chipsetTemp: mfVal.chipsetTemp,
+      voltageRails: mfVal.voltageRails
     },
-    fans: fanSpeedsVal
+    fans: mfVal.fans
   }
+}
+
+export async function getSensorInfo(): Promise<SensorInfo> {
+  return cached('sensor:info', 30000, fetchSensorInfo)
 }

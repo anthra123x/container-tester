@@ -1,7 +1,9 @@
 import si from 'systeminformation'
-import { runPowerShellJson, runPowerShellWithRetry } from './powershell'
+import { runPowerShellWithRetry } from './powershell'
+import { cached } from './service-cache'
 
 const SI_TIMEOUT = 8000
+const PS_TIMEOUT = 5000
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return Promise.race([
@@ -42,7 +44,7 @@ interface PSBatteryData {
   ManufactureDate?: string
   ManufactureName?: string
   SerialNumber?: string
-  Chemistry?: string
+  Chemistry?: number
   DesignVoltage?: number
   LowCapacityWarning?: number
 }
@@ -56,7 +58,9 @@ async function getBatteryFullChargedCapacity(): Promise<{ designed: number | nul
         designed: parsed.DesignedCapacity ?? null,
         fullCharged: parsed.FullChargedCapacity ?? null
       }
-    }
+    },
+    1,
+    PS_TIMEOUT
   )
   return result ?? { designed: null, fullCharged: null }
 }
@@ -64,7 +68,9 @@ async function getBatteryFullChargedCapacity(): Promise<{ designed: number | nul
 async function getBatteryStaticData(): Promise<PSBatteryData | null> {
   return runPowerShellWithRetry<PSBatteryData>(
     `Get-WmiObject -Namespace root\\wmi -Class BatteryStaticData | Select-Object CycleCount,Temperature,Voltage,ManufactureDate,ManufactureName,SerialNumber,Chemistry,DesignedVoltage | ConvertTo-Json -Compress`,
-    (raw) => JSON.parse(raw)
+    (raw) => JSON.parse(raw),
+    1,
+    PS_TIMEOUT
   )
 }
 
@@ -81,24 +87,33 @@ async function getBatteryRuntime(): Promise<{ estimatedRuntime: number | null; c
     return "{ ""EstimatedRuntime"": $er, ""ChargeRate"": $cr, ""DischargeRate"": $dr }"
   `
   const result = await runPowerShellWithRetry<{ estimatedRuntime: number | null; chargeRate: number | null; dischargeRate: number | null }>(
-    script, JSON.parse
+    script, JSON.parse, 1, PS_TIMEOUT
   )
   return result ?? { estimatedRuntime: null, chargeRate: null, dischargeRate: null }
 }
 
-export async function getBatteryInfo(): Promise<BatteryInfo> {
-  const battery = await withTimeout(si.battery(), SI_TIMEOUT, 'battery').catch(() => ({
-    hasBattery: false, isCharging: false, maxCapacity: null, currentCapacity: null,
-    designedCapacity: null, cycleCount: null, voltage: null, acConnected: false
-  }))
-  const { designed, fullCharged } = await getBatteryFullChargedCapacity()
-  const staticData = await getBatteryStaticData()
-  const runtime = await getBatteryRuntime()
+async function fetchBatteryInfoRaw(): Promise<BatteryInfo> {
+  const [battery, capacity, staticData, runtime] = await Promise.allSettled([
+    withTimeout(si.battery(), SI_TIMEOUT, 'battery').catch(() => ({
+      hasBattery: false, isCharging: false, maxCapacity: null, currentCapacity: null,
+      designedCapacity: null, cycleCount: null, voltage: null, acConnected: false
+    })),
+    getBatteryFullChargedCapacity(),
+    getBatteryStaticData(),
+    getBatteryRuntime(),
+  ])
 
-  const designCapacity = designed ?? (battery.designedCapacity ?? null)
-  const maxCapacity = fullCharged ?? (battery.maxCapacity ?? null)
-  const currentCapacity = battery.currentCapacity ?? null
-  const cycleCount = staticData?.CycleCount ?? (battery.cycleCount ?? null)
+  const bat = battery.status === 'fulfilled' ? battery.value
+    : { hasBattery: false, isCharging: false, maxCapacity: null, currentCapacity: null,
+         designedCapacity: null, cycleCount: null, voltage: null, acConnected: false }
+  const cap = capacity.status === 'fulfilled' ? capacity.value : { designed: null, fullCharged: null }
+  const sd = staticData.status === 'fulfilled' ? staticData.value : null
+  const rt = runtime.status === 'fulfilled' ? runtime.value : { estimatedRuntime: null, chargeRate: null, dischargeRate: null }
+
+  const designCapacity = cap.designed ?? (bat.designedCapacity ?? null)
+  const maxCapacity = cap.fullCharged ?? (bat.maxCapacity ?? null)
+  const currentCapacity = bat.currentCapacity ?? null
+  const cycleCount = sd?.CycleCount ?? (bat.cycleCount ?? null)
 
   let wearLevel: number | null = null
   if (designCapacity && designCapacity > 0) {
@@ -114,18 +129,18 @@ export async function getBatteryInfo(): Promise<BatteryInfo> {
   }
 
   let chemistry: string | null = null
-  if (staticData?.Chemistry !== undefined) {
+  if (sd?.Chemistry !== undefined) {
     const chemMap: Record<number, string> = {
       1: 'Other', 2: 'Unknown', 3: 'Lead Acid', 4: 'Nickel Cadmium',
       5: 'Nickel Metal Hydride', 6: 'Lithium Ion', 7: 'Lithium Polymer',
       8: 'Lithium Iron Phosphate', 9: 'Silver Oxide', 10: 'Zinc Air'
     }
-    chemistry = chemMap[staticData.Chemistry] ?? `Type ${staticData.Chemistry}`
+    chemistry = chemMap[sd.Chemistry] ?? `Type ${sd.Chemistry}`
   }
 
   let manufactureDate: string | null = null
-  if (staticData?.ManufactureDate) {
-    const d = staticData.ManufactureDate
+  if (sd?.ManufactureDate) {
+    const d = sd.ManufactureDate
     if (typeof d === 'number' && d.toString().length === 4) {
       manufactureDate = d.toString()
     } else if (typeof d === 'string') {
@@ -133,28 +148,32 @@ export async function getBatteryInfo(): Promise<BatteryInfo> {
     }
   }
 
-  const temp = staticData?.Temperature != null
-    ? Math.round((staticData.Temperature - 273.15) * 100) / 100
+  const temp = sd?.Temperature != null
+    ? Math.round((sd.Temperature - 273.15) * 100) / 100
     : null
 
   return {
-    hasBattery: battery.hasBattery,
-    isCharging: battery.isCharging ?? battery.acConnected ?? false,
+    hasBattery: bat.hasBattery,
+    isCharging: bat.isCharging ?? bat.acConnected ?? false,
     designCapacity,
     currentCapacity,
     maxCapacity,
     wearLevel,
     cycleCount,
-    voltage: staticData?.Voltage != null ? Math.round(staticData.Voltage / 1000 * 100) / 100 : (battery.voltage ?? null),
+    voltage: sd?.Voltage != null ? Math.round(sd.Voltage / 1000 * 100) / 100 : (bat.voltage ?? null),
     temperature: temp,
     health,
     chemistry,
     manufactureDate,
-    serialNumber: staticData?.SerialNumber ?? null,
-    chargeRate: runtime.chargeRate,
-    dischargeRate: runtime.dischargeRate,
-    estimatedRuntime: runtime.estimatedRuntime,
-    designVoltage: staticData?.DesignedVoltage ?? null,
-    lowCapacityWarning: staticData?.LowCapacityWarning ?? null,
+    serialNumber: sd?.SerialNumber ?? null,
+    chargeRate: rt.chargeRate,
+    dischargeRate: rt.dischargeRate,
+    estimatedRuntime: rt.estimatedRuntime,
+    designVoltage: sd?.DesignedVoltage ?? null,
+    lowCapacityWarning: sd?.LowCapacityWarning ?? null,
   }
+}
+
+export async function getBatteryInfo(): Promise<BatteryInfo> {
+  return cached('battery:info', 30000, fetchBatteryInfoRaw)
 }

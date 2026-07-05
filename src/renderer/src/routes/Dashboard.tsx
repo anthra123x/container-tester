@@ -205,6 +205,21 @@ export function Dashboard() {
           <div className="w-20 h-1 bg-gradient-to-r from-primary-500 to-primary-300 rounded-full mt-4" />
         </motion.div>
 
+        {live.restricted && (
+          <motion.div variants={item} className="bg-danger/5 border border-danger/10 rounded-xl p-4 flex items-start gap-3">
+            <div className="p-2 rounded-lg bg-danger/10 shrink-0">
+              <AlertCircle className="w-4 h-4 text-danger" />
+            </div>
+            <div>
+              <h4 className="text-sm font-bold text-primary-900 mb-0.5">Permisos insuficientes</h4>
+              <p className="text-xs text-neutral-600">
+                No se pueden obtener las métricas del sistema. La aplicación necesita ejecutarse como administrador.
+                Cierre y reinicie la aplicación con permisos elevados.
+              </p>
+            </div>
+          </motion.div>
+        )}
+
         <motion.div variants={item} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           {metrics.map((m, i) => (
             <MetricCard key={i} {...m} />
